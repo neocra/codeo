@@ -19,8 +19,11 @@ Each job runs `pnpm --filter @codeo/desktop package:<os>`:
   dependencies into `apps/desktop/runtime-bundle/` with plain npm, so the packaged runtime does not
   depend on the monorepo's pnpm layout. electron-builder ships that folder as
   `Resources/runtime`, where the desktop main process spawns `main.js`.
-- `electron-vite build` bundles main, preload and renderer (every workspace package, `ws`, `zod`);
-  only `electron-updater` is shipped from `node_modules`.
+- `electron-vite build` bundles main, preload and renderer (every workspace package, `zod`); only the
+  production dependencies `electron-updater` and `ws` are shipped from `node_modules`.
+- On macOS the bundle also receives the x64 native packages (`CODEO_RUNTIME_EXTRA_ARCH=x64,arm64`,
+  fetched with `npm pack`), and electron-builder ships only the matching `*-darwin-<arch>*` packages in
+  each app.
 - `electron-builder --publish never` produces the installers and the `latest*.yml` manifests;
   `gh release upload … --clobber` attaches them to the release.
 

@@ -33,8 +33,13 @@ jobs:
       CSC_LINK: ${{ secrets.CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+      # The macOS job ships arm64 and x64 apps from one runtime bundle: fetch both architectures' native packages.
+      CODEO_RUNTIME_EXTRA_ARCH: ${{ matrix.target == 'mac' && 'x64,arm64' || '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build exactly the tagged code, also on manual dispatch.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: pnpm }

@@ -96,14 +96,14 @@ function UpdatesCard() {
         <div className="cd-row-gap">
           <span className="cd-muted cd-body-sm">{t('updates.current')}</span>
           <span className="cd-key">{status?.currentVersion ?? codeo.appVersion}</span>
-          {state !== 'idle' ? (
+          {status?.availableVersion && (state === 'available' || state === 'downloading' || state === 'ready') ? (
             <StatusPill key={state} tone={tone}>
-              {status?.availableVersion && (state === 'available' || state === 'downloading' || state === 'ready') ? `v${status.availableVersion}` : state}
+              v{status.availableVersion}
             </StatusPill>
           ) : null}
         </div>
         {message ? <div className={state === 'error' ? 'cd-field__error' : 'cd-body-sm cd-muted'}>{message}</div> : null}
-        {state === 'downloading' ? <ProgressBar value={status?.progress ?? 0} running tone="sky" /> : null}
+        {state === 'downloading' ? <ProgressBar value={status?.progress ?? 0} running tone="sky" label={t('updates.title')} /> : null}
         <div className="cd-row-gap">
           <Button variant="secondary" icon="refresh" loading={state === 'checking'} disabled={busy || state === 'downloading'} onClick={() => void run(() => codeo.checkForUpdates())}>
             {t('updates.check')}

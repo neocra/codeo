@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   main: {
-    /* Only `dependencies` (electron-updater) stay external; everything else — workspace packages, ws, zod — is bundled. */
+    /* `dependencies` (electron-updater, ws — bundling ws breaks its WebSocket client) stay external; workspace packages and zod are bundled. */
     plugins: [externalizeDepsPlugin()],
     build: { rollupOptions: { output: { format: 'es' } } },
   },

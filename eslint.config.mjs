@@ -26,6 +26,11 @@ export default tseslint.config(
     languageOptions: { sourceType: 'module', globals: { process: 'readonly', console: 'readonly', URL: 'readonly' } },
   },
   {
+    files: ['**/*.cjs'],
+    languageOptions: { sourceType: 'commonjs', globals: { module: 'writable', require: 'readonly', __dirname: 'readonly', process: 'readonly', console: 'readonly' } },
+    rules: { '@typescript-eslint/no-require-imports': 'off', 'no-console': 'off' },
+  },
+  {
     files: ['**/*.config.js', '**/*.config.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: { module: 'writable', require: 'readonly', __dirname: 'readonly', process: 'readonly' } },
     rules: { '@typescript-eslint/no-require-imports': 'off' },

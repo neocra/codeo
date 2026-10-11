@@ -33,6 +33,9 @@ export class UpdateService {
 
   attach(window: BrowserWindow): void {
     this.window = window;
+    window.once('closed', () => {
+      if (this.window === window) this.window = null;
+    });
   }
 
   get current(): UpdateStatus {
@@ -41,7 +44,7 @@ export class UpdateService {
 
   private set(patch: Partial<UpdateStatus>): UpdateStatus {
     this.status = { ...this.status, ...patch };
-    this.window?.webContents.send(IPC.updateStatus, this.status);
+    if (this.window && !this.window.isDestroyed()) this.window.webContents.send(IPC.updateStatus, this.status);
     return this.status;
   }
 
