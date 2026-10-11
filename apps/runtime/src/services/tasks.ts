@@ -340,15 +340,16 @@ export class TaskService {
     return lines.filter((l) => l !== null).join('\n').trim();
   }
 
+  /** Everything the agent said in its last turn (a turn can hold several text blocks), capped for the prompt. */
   private async lastAssistantText(sessionId: string): Promise<string> {
     const entries = await this.sessions.entries(sessionId, 0);
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const e = entries[i]!;
-      if (e.kind === 'assistant_text' && e.text.trim()) {
-        return e.text.length > HANDOFF_MAX_CHARS ? `${e.text.slice(0, HANDOFF_MAX_CHARS)}…` : e.text;
-      }
-    }
-    return '';
+    const lastUser = entries.map((e) => e.kind).lastIndexOf('user_message');
+    const parts = entries
+      .slice(lastUser + 1)
+      .filter((e): e is Extract<typeof e, { kind: 'assistant_text' }> => e.kind === 'assistant_text' && e.text.trim().length > 0)
+      .map((e) => e.text.trim());
+    const text = parts.join('\n\n');
+    return text.length > HANDOFF_MAX_CHARS ? `${text.slice(0, HANDOFF_MAX_CHARS)}…` : text;
   }
 
   private async onSessionStatus(session: AgentSession): Promise<void> {

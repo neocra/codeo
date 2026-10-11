@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { RuntimeError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
-import { createWorktree, isDirty, pruneWorktrees, removeWorktree, resolveCommit } from '@codeo/git';
+import { createWorktree, isDirty, listWorktrees, pruneWorktrees, removeWorktree, resolveCommit } from '@codeo/git';
 import { newId, type KeyedLock, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { WorkspaceService } from './workspaces';
@@ -86,10 +86,30 @@ export class WorktreeService {
     const branch = worktreeBranch(task, lane);
     const target = path.join(this.rootDir, repository.id, lane ? `${task.id}-${lane.order + 1}` : task.id);
     mkdirSync(path.dirname(target), { recursive: true });
-    try {
-      await createWorktree({ root: repository.path, path: target, branch, baseBranch });
-    } catch (err) {
-      throw new RuntimeError('CONFLICT', `Impossible de créer le worktree ${branch} : ${err instanceof Error ? err.message : String(err)}`);
+    /* Crash recovery: a directory left by a run that died between `git worktree add` and the row insert
+       is adopted when git knows it on the expected branch; anything else at that path is refused, never deleted. */
+    let created = false;
+    if (existsSync(target)) {
+      /* git reports canonical paths (e.g. /private/tmp on macOS): compare real paths. */
+      const real = (p: string) => {
+        try {
+          return realpathSync.native(p);
+        } catch {
+          return path.resolve(p);
+        }
+      };
+      const registered = (await listWorktrees(repository.path).catch(() => [])).find((w) => real(w.path) === real(target));
+      if (!registered || registered.branch !== branch) {
+        throw new RuntimeError('CONFLICT', `Le dossier ${target} existe déjà et n’est pas le worktree attendu (${branch}) : déplacez-le ou supprimez-le.`);
+      }
+      this.log.warn('adopting worktree left by an interrupted run', { path: target, branch });
+    } else {
+      try {
+        await createWorktree({ root: repository.path, path: target, branch, baseBranch });
+        created = true;
+      } catch (err) {
+        throw new RuntimeError('CONFLICT', `Impossible de créer le worktree ${branch} : ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     const worktree: Worktree = {
       id: newId('wt'),
@@ -103,7 +123,13 @@ export class WorktreeService {
       dirty: false,
       createdAt: new Date().toISOString(),
     };
-    await this.repo.insert(worktree);
+    try {
+      await this.repo.insert(worktree);
+    } catch (err) {
+      /* Never leave an unrecorded worktree behind: undo what this call created (the branch stays). */
+      if (created) await removeWorktree(repository.path, target, { force: true }).catch((e) => this.log.error('rollback failed', { target, err: String(e) }));
+      throw err;
+    }
     this.bus.publish('WorktreeCreated', { worktree });
     return worktree;
   }
@@ -122,6 +148,9 @@ export class WorktreeService {
       await removeWorktree(repository.path, worktree.path, { force: opts.force });
     } else {
       await opts.beforeRemove?.();
+      /* Directory gone (deleted outside Codeo): clear git's stale registration so the branch can be reattached later. */
+      const repository = (await this.workspaces.get(worktree.workspaceId).catch(() => null))?.repositories.find((r) => r.id === worktree.repositoryId);
+      if (repository) await pruneWorktrees(repository.path).catch((e) => this.log.warn('prune failed', { err: String(e) }));
     }
     await this.repo.delete(id);
     this.bus.publish('WorktreeRemoved', { worktreeId: id, taskId: worktree.taskId });

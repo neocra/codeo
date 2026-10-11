@@ -1,6 +1,6 @@
 import type { AgentProvider, ProviderSessionHandle, StartSessionOptions } from '@codeo/agent-provider-core';
 import type { ProviderStatus } from '@codeo/domain';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -331,6 +331,28 @@ describe('worktree recovery', () => {
     expect(existsSync(again.path)).toBe(true);
     expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(1);
     await runtime.services.worktrees.remove(again.id, { force: true });
+  });
+
+  it('adopts a worktree left by a run that died before persisting it, and refuses a foreign folder', async () => {
+    const [ws] = await client.request('workspaces.list', {});
+    const task = await runtime.services.tasks.create({ workspaceId: ws!.id, title: 'Adopter', objective: '', ticketKey: null, repositoryIds: [], provider: 'claude-code', role: 'developer', model: null, orchestration: 'single', isolation: 'worktree', subtasks: [] });
+    const sub = task.subtasks[0]!;
+    const repoId = ws!.repositories[0]!.id;
+    const wt = await runtime.services.worktrees.ensureForSubtask(task, sub, repoId);
+    /* Simulate the crash: the git worktree exists but the row does not. */
+    const rows = await client.request('worktrees.list', { taskId: task.id });
+    expect(rows).toHaveLength(1);
+    await (runtime.services.worktrees as unknown as { repo: { delete(id: string): Promise<void> } }).repo.delete(wt.id);
+    const adopted = await runtime.services.worktrees.ensureForSubtask(task, sub, repoId);
+    expect(adopted.path).toBe(wt.path);
+    expect(adopted.branch).toBe(wt.branch);
+    expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(1);
+    await runtime.services.worktrees.remove(adopted.id, { force: true });
+    /* A foreign folder at the expected path is never touched. */
+    mkdirSync(wt.path, { recursive: true });
+    writeFileSync(path.join(wt.path, 'etranger.txt'), 'x');
+    await expect(runtime.services.worktrees.ensureForSubtask(task, sub, repoId)).rejects.toThrow(/n’est pas le worktree attendu/);
+    rmSync(wt.path, { recursive: true, force: true });
   });
 });
 
