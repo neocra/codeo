@@ -4,7 +4,7 @@ import { orderedSubtasks, type Task, type Worktree } from '@codeo/domain';
 import { Banner, Button, Card, Icon, StatusPill } from '@codeo/ui-desktop';
 import { invoke, describeError } from '../lib/api';
 import { useT } from '../lib/i18n';
-import { useWorktrees } from '../lib/queries';
+import { useSessions, useWorktrees } from '../lib/queries';
 import { useUi } from '../lib/store';
 import { subtaskTone } from './status';
 
@@ -19,6 +19,9 @@ export function TaskDetail({ task }: { task: Task }) {
   const qc = useQueryClient();
   const openSession = useUi((s) => s.openSession);
   const worktrees = useWorktrees(task.id);
+  const sessions = useSessions(task.workspaceId);
+  /* A pause that could not stop every agent leaves sessions active: the runtime expects the pause to be retried. */
+  const stopPending = task.status === 'paused' && task.subtasks.some((s) => s.sessionId && (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval')));
   const [error, setError] = useState<string | null>(null);
   const onError = (e: unknown) => setError(describeError(e, t));
   const onSettled = () => invalidate(qc);
@@ -89,8 +92,13 @@ export function TaskDetail({ task }: { task: Task }) {
               {t('action.pause')}
             </Button>
           ) : null}
+          {stopPending ? (
+            <Button variant="secondary" size="sm" icon="stop" loading={pause.isPending} onClick={() => pause.mutate()}>
+              {t('action.retryStop')}
+            </Button>
+          ) : null}
           {task.status === 'paused' ? (
-            <Button variant="primary" size="sm" icon="play" loading={resume.isPending} onClick={() => resume.mutate()}>
+            <Button variant="primary" size="sm" icon="play" loading={resume.isPending} disabled={stopPending} onClick={() => resume.mutate()}>
               {t('action.resume')}
             </Button>
           ) : null}

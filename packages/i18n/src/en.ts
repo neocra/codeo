@@ -107,6 +107,7 @@ export const en: Record<MessageKey, string> = {
   'tasks.agents.plural': '{n} agents',
   'action.pause': 'Pause',
   'action.resume': 'Resume',
+  'action.retryStop': 'Retry the stop',
   'status.pending': 'Pending',
   'tasks.create.mode': 'Orchestration',
   'tasks.mode.single': 'One agent',

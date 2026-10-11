@@ -163,7 +163,8 @@ export const TaskSchema = z.object({
   objective: z.string().default(''),
   status: TaskStatusSchema,
   orchestration: OrchestrationModeSchema.default('single'),
-  isolation: TaskIsolationSchema.default('worktree'),
+  /** Serialized tasks without the field predate worktree isolation (migration 0001 marks them 'none'); new tasks are persisted explicitly. */
+  isolation: TaskIsolationSchema.default('none'),
   repositoryIds: z.array(IdSchema).default([]),
   subtasks: z.array(SubtaskSchema).default([]),
   progress: z.number().min(0).max(100).default(0),

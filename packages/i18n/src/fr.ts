@@ -112,6 +112,7 @@ export const fr = {
   'tasks.agents.plural': '{n} agents',
   'action.pause': 'Mettre en pause',
   'action.resume': 'Reprendre',
+  'action.retryStop': 'Réessayer l’arrêt',
   'status.pending': 'En attente',
   'tasks.create.mode': 'Orchestration',
   'tasks.mode.single': 'Un agent',
