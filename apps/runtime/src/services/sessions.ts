@@ -36,7 +36,8 @@ export function laneKey(dir: string): string {
   return path.resolve(dir);
 }
 
-export type SendInterceptor = (session: AgentSession, next: () => Promise<AgentSession>) => Promise<AgentSession>;
+export type SessionOperation = 'send' | 'cancel';
+export type SendInterceptor = (session: AgentSession, next: () => Promise<AgentSession>, operation: SessionOperation) => Promise<AgentSession>;
 
 export interface SessionListener {
   onStatus(session: AgentSession, previous: SessionStatus): void;
@@ -187,6 +188,17 @@ export class SessionService {
       if (terminal) await this.setStatus(session, terminal, message);
       throw new RuntimeError('CONFLICT', message);
     }
+    if (session.worktreeId && this.worktreeValidator) {
+      try {
+        await this.worktreeValidator(session.worktreeId);
+      } catch (err) {
+        /* The directory is not this session's worktree any more: close the session rather than run an agent in a foreign folder. */
+        const message = err instanceof Error ? err.message : String(err);
+        const terminal = canTransitionSession(session.status, 'completed') ? 'completed' : canTransitionSession(session.status, 'failed') ? 'failed' : null;
+        if (terminal) await this.setStatus(session, terminal, message);
+        throw err instanceof RuntimeError ? err : new RuntimeError('CONFLICT', message);
+      }
+    }
     if (this.closed) throw new RuntimeError('CONFLICT', 'Le runtime s’arrête : aucune session ne peut démarrer.');
     const provider = this.providers.get(session.provider);
     const status = this.providers.status(session.provider);
@@ -333,7 +345,7 @@ export class SessionService {
     const session = await this.get(sessionId);
     const inner = () => (session.worktreeId ? this.worktreeLocks.run(laneKey(session.cwd), () => this.sendUnlocked(sessionId, text)) : this.sendUnlocked(sessionId, text));
     if (opts.fromScheduler) return inner();
-    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>((next, interceptor) => () => interceptor(session, next), inner)();
+    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>((next, interceptor) => () => interceptor(session, next, 'send'), inner)();
   }
 
   private async sendUnlocked(sessionId: string, text: string): Promise<AgentSession> {
@@ -359,9 +371,12 @@ export class SessionService {
     return session.worktreeId ? this.worktreeLocks.run(laneKey(session.cwd), fn) : fn();
   }
 
-  async cancel(sessionId: string): Promise<AgentSession> {
+  /** `fromScheduler`: the task scheduler already holds the task lock (interceptors skipped). */
+  async cancel(sessionId: string, opts: { fromScheduler?: boolean } = {}): Promise<AgentSession> {
     const session = await this.get(sessionId);
-    return this.inWorktree(session, () => this.cancelUnlocked(sessionId));
+    const inner = () => this.inWorktree(session, () => this.cancelUnlocked(sessionId));
+    if (opts.fromScheduler) return inner();
+    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>((next, interceptor) => () => interceptor(session, next, 'cancel'), inner)();
   }
 
   /** Cancel without taking the worktree lock — for callers that already hold it. */
@@ -411,6 +426,9 @@ export class SessionService {
       if (s) await this.setStatus(s, 'disconnected', 'Runtime arrêté.');
     }
   }
+
+  /** Set by the runtime: verifies a session's worktree is still the one git knows before resuming into it. */
+  worktreeValidator: ((worktreeId: string) => Promise<unknown>) | null = null;
 
   /** After shutdown: nothing may start (a late scheduler callback must not spawn a provider). */
   private closed = false;

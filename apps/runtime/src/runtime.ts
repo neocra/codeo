@@ -80,6 +80,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const worktreesDir = opts.worktreesDir ?? (opts.dataDir === ':memory:' ? path.join(os.tmpdir(), 'codeo-worktrees') : path.join(opts.dataDir, 'worktrees'));
   const workspaceLocks = new KeyedLock();
   const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir, workspaceLocks);
+  sessions.worktreeValidator = (worktreeId) => worktrees.assertIntact(worktreeId);
   const tasks = new TaskService(new TaskRepo(db.db), workspaces, sessions, worktrees, bus, log.child('tasks'));
   await approvals.init();
   await sessions.init();

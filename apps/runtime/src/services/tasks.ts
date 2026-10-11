@@ -63,8 +63,9 @@ export class TaskService {
     private readonly bus: EventBus,
     private readonly log: Logger,
   ) {
-    sessions.addSendInterceptor((s, next) => (s.taskId ? this.locked(s.taskId, async () => {
-      await this.assertSendAllowed(s);
+    /* Sends and user cancellations of task-owned sessions run under the task lock, serialised with the scheduler. */
+    sessions.addSendInterceptor((s, next, operation) => (s.taskId ? this.locked(s.taskId, async () => {
+      if (operation === 'send') await this.assertSendAllowed(s);
       return next();
     }) : next()));
     sessions.addListener({
@@ -230,7 +231,7 @@ export class TaskService {
       for (const s of task.subtasks) {
         if ((s.status === 'failed' || s.status === 'cancelled') && s.sessionId && this.sessions.isLive(s.sessionId)) {
           try {
-            await this.sessions.cancel(s.sessionId);
+            await this.sessions.cancel(s.sessionId, { fromScheduler: true });
           } catch (err) {
             /* No replacement while the old agent may still hold the worktree. */
             throw new RuntimeError('CONFLICT', `Impossible de fermer l’ancienne session de « ${s.title} » : ${err instanceof Error ? err.message : String(err)}. Réessayez.`);
@@ -299,7 +300,7 @@ export class TaskService {
     for (const s of task.subtasks) {
       if (!s.sessionId || !this.sessions.isLive(s.sessionId)) continue;
       try {
-        await this.sessions.cancel(s.sessionId);
+        await this.sessions.cancel(s.sessionId, { fromScheduler: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.log.error('session stop failed', { sessionId: s.sessionId, err: message });

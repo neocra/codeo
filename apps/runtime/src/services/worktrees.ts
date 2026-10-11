@@ -58,6 +58,19 @@ export class WorktreeService {
   }
 
   /** The git worktree registered at `dir`, if any; git reports canonical paths (e.g. /private/tmp on macOS). */
+  /** Throws unless git still registers the lane's directory as a worktree on its branch (resume safety). */
+  async assertIntact(id: string): Promise<Worktree> {
+    const worktree = await this.get(id);
+    const ws = await this.workspaces.get(worktree.workspaceId);
+    const repository = ws.repositories.find((r) => r.id === worktree.repositoryId);
+    if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${worktree.repositoryId}`);
+    const registered = await this.registeredWorktree(repository.path, worktree.path);
+    if (!registered || registered.branch !== worktree.branch) {
+      throw new RuntimeError('CONFLICT', `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : la session ne peut pas y reprendre.`);
+    }
+    return worktree;
+  }
+
   private async registeredWorktree(repositoryPath: string, dir: string): Promise<{ path: string; branch: string | null } | null> {
     const real = (p: string) => {
       try {
