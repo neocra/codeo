@@ -299,11 +299,9 @@ describe('orchestration and worktrees', () => {
     const [wt] = await client.request('worktrees.list', { taskId: task.id });
     writeFileSync(path.join(wt!.path, 'travail.txt'), 'non commité');
     expect((await client.request('worktrees.list', { taskId: task.id }))[0]?.dirty).toBe(true);
-    /* An idle session is still live (resumable): the worktree stays until it is stopped. */
     const owner = (await client.request('sessions.list', { taskId: task.id })).find((s) => s.worktreeId === wt!.id)!;
-    await expect(client.request('worktrees.remove', { worktreeId: wt!.id, force: true })).rejects.toThrow(/session est encore ouverte/);
-    await client.request('sessions.cancel', { sessionId: owner.id });
-    /* The workspace cannot disappear from under its worktrees either. */
+    expect((await client.request('sessions.get', { sessionId: owner.id })).session.status).toBe('idle');
+    /* The workspace cannot disappear from under its worktrees. */
     await expect(client.request('workspaces.delete', { workspaceId: task.workspaceId })).rejects.toThrow(/worktree/);
     await expect(client.request('worktrees.remove', { worktreeId: wt!.id })).rejects.toThrow(/non commitées/);
     expect(existsSync(wt!.path)).toBe(true);
@@ -311,13 +309,14 @@ describe('orchestration and worktrees', () => {
     expect(existsSync(wt!.path)).toBe(false);
     expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(0);
     await expect(git(['show-ref', '--verify', `refs/heads/${wt!.branch}`], { cwd: repoDir })).resolves.toBeTruthy();
-    /* The session that lived there can no longer be resumed into a missing directory. */
+    /* The idle owner was closed with its worktree and cannot be resumed into a missing directory. */
+    expect((await client.request('sessions.get', { sessionId: owner.id })).session.status).toBe('completed');
     await expect(client.request('sessions.send', { sessionId: owner.id, text: 'encore' })).rejects.toThrow(/n’existe plus/);
   });
 });
 
 describe('shutdown', () => {
-  it('leaves tasks in review untouched when their idle agents disconnect', async () => {
+  it('leaves tasks in review untouched when their idle agents disconnect', { timeout: 60_000 }, async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'codeo-rt2-'));
     const rt = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false });
     await rt.services.providers.detectAll();

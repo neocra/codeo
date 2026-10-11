@@ -4,3 +4,4 @@ export { redactSecrets } from './redact';
 export { TypedEmitter } from './emitter';
 export { Deferred } from './deferred';
 export { assertNever } from './assert';
+export { KeyedLock } from './keyed-lock';

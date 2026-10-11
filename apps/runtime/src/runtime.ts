@@ -7,7 +7,7 @@ import { commands, RuntimeError, type CommandName, type CommandParsedParams, typ
 import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, WorktreeRepo, type OpenedDatabase } from '@codeo/database';
 import type { Machine } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
-import { createLogger, newId, type Logger } from '@codeo/shared-utils';
+import { createLogger, KeyedLock, newId, type Logger } from '@codeo/shared-utils';
 import { EventBus } from './event-bus';
 import { ApprovalService } from './services/approvals';
 import { ProviderRegistry } from './services/providers';
@@ -77,7 +77,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const approvals = new ApprovalService(new ApprovalRepo(db.db), bus, log.child('approvals'));
   const sessions = new SessionService(new SessionRepo(db.db), workspaces, providers, approvals, bus, log.child('sessions'));
   const worktreesDir = opts.worktreesDir ?? (opts.dataDir === ':memory:' ? path.join(os.tmpdir(), 'codeo-worktrees') : path.join(opts.dataDir, 'worktrees'));
-  const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir);
+  const workspaceLocks = new KeyedLock();
+  const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir, workspaceLocks);
   const tasks = new TaskService(new TaskRepo(db.db), workspaces, sessions, worktrees, bus, log.child('tasks'));
   await approvals.init();
   await sessions.init();
@@ -111,14 +112,16 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'workspaces.list': async () => workspaces.list(),
     'workspaces.create': async (p) => workspaces.create(p),
     'workspaces.addRepository': async (p) => workspaces.addRepository(p.workspaceId, p.path),
-    'workspaces.removeRepository': async (p) => {
-      await assertNoWorktrees(p.workspaceId, p.repositoryId);
-      return workspaces.removeRepository(p.workspaceId, p.repositoryId);
-    },
-    'workspaces.delete': async (p) => {
-      await assertNoWorktrees(p.workspaceId);
-      return { deleted: await workspaces.delete(p.workspaceId) };
-    },
+    'workspaces.removeRepository': async (p) =>
+      workspaceLocks.run(p.workspaceId, async () => {
+        await assertNoWorktrees(p.workspaceId, p.repositoryId);
+        return workspaces.removeRepository(p.workspaceId, p.repositoryId);
+      }),
+    'workspaces.delete': async (p) =>
+      workspaceLocks.run(p.workspaceId, async () => {
+        await assertNoWorktrees(p.workspaceId);
+        return { deleted: await workspaces.delete(p.workspaceId) };
+      }),
     'tasks.list': async (p) => tasks.list(p.workspaceId),
     'tasks.get': async (p) => tasks.get(p.taskId),
     'tasks.create': async (p) => tasks.create(p),
@@ -129,10 +132,18 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'worktrees.list': async (p) => worktrees.list(p),
     'worktrees.remove': async (p) => {
       const wt = await worktrees.get(p.worktreeId);
-      /* Any live session (running, waiting, or idle but resumable) still owns the directory. */
-      const busy = (await sessions.list({ workspaceId: wt.workspaceId })).some((s) => s.worktreeId === wt.id && sessions.isLive(s.id));
-      if (busy) throw new RuntimeError('CONFLICT', 'Une session est encore ouverte dans ce worktree : arrêtez-la d’abord.');
-      return { removed: await worktrees.remove(p.worktreeId, { force: p.force }) };
+      /* A working agent keeps its worktree; idle sessions are closed with it (they cannot resume without the directory). */
+      const owners = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => s.worktreeId === wt.id && sessions.isLive(s.id));
+      if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
+        throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
+      }
+      const removed = await worktrees.remove(p.worktreeId, {
+        force: p.force,
+        beforeRemove: async () => {
+          for (const s of owners) await sessions.release(s.id, 'Session fermée : le worktree a été supprimé.');
+        },
+      });
+      return { removed };
     },
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),

@@ -4,7 +4,7 @@ import { RuntimeError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
 import { createWorktree, isDirty, removeWorktree, resolveCommit } from '@codeo/git';
-import { newId, type Logger } from '@codeo/shared-utils';
+import { newId, type KeyedLock, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { WorkspaceService } from './workspaces';
 
@@ -42,6 +42,8 @@ export class WorktreeService {
     private readonly bus: EventBus,
     private readonly log: Logger,
     private readonly rootDir: string,
+    /** Shared with workspace deletion so a worktree can never be created under a vanishing workspace. */
+    readonly locks: KeyedLock,
   ) {}
 
   async list(filter: { workspaceId?: string | undefined; taskId?: string | undefined }): Promise<Worktree[]> {
@@ -63,7 +65,11 @@ export class WorktreeService {
   }
 
   /** The worktree a subtask works in: shared by the task's steps, or its own in parallel modes. Reused when it still exists. */
-  async ensureForSubtask(task: Task, sub: Subtask, repositoryId: string): Promise<Worktree> {
+  ensureForSubtask(task: Task, sub: Subtask, repositoryId: string): Promise<Worktree> {
+    return this.locks.run(task.workspaceId, () => this.ensureForSubtaskLocked(task, sub, repositoryId));
+  }
+
+  private async ensureForSubtaskLocked(task: Task, sub: Subtask, repositoryId: string): Promise<Worktree> {
     const ws = await this.workspaces.get(task.workspaceId);
     const repository = ws.repositories.find((r) => r.id === repositoryId);
     if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${repositoryId}`);
@@ -102,7 +108,7 @@ export class WorktreeService {
   }
 
   /** Removes the directory; the branch (and every commit on it) stays in the repository. */
-  async remove(id: string, opts: { force: boolean }): Promise<boolean> {
+  async remove(id: string, opts: { force: boolean; /** Runs after the safety checks, right before the directory goes (release owning sessions). */ beforeRemove?: () => Promise<void> }): Promise<boolean> {
     const worktree = await this.get(id);
     if (existsSync(worktree.path)) {
       const ws = await this.workspaces.get(worktree.workspaceId);
@@ -111,7 +117,10 @@ export class WorktreeService {
       if (!opts.force && (await isDirty(worktree.path).catch(() => false))) {
         throw new RuntimeError('CONFLICT', 'Ce worktree contient des modifications non commitées. Confirmez la suppression forcée pour les abandonner.');
       }
+      await opts.beforeRemove?.();
       await removeWorktree(repository.path, worktree.path, { force: opts.force });
+    } else {
+      await opts.beforeRemove?.();
     }
     await this.repo.delete(id);
     this.bus.publish('WorktreeRemoved', { worktreeId: id, taskId: worktree.taskId });

@@ -330,6 +330,20 @@ export class SessionService {
     return this.setStatus(await this.get(sessionId), 'cancelled');
   }
 
+  /** Closes an idle session's provider process (e.g. its worktree is being removed). Running sessions are refused. */
+  async release(sessionId: string, reason: string): Promise<AgentSession> {
+    const session = await this.get(sessionId);
+    const live = this.live.get(sessionId);
+    if (!live) return session;
+    if (session.status === 'running' || session.status === 'waiting_approval') {
+      throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
+    }
+    this.live.delete(sessionId);
+    await live.handle.close();
+    await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', text: reason }));
+    return this.setStatus(await this.get(sessionId), 'completed');
+  }
+
   isLive(sessionId: string): boolean {
     return this.live.has(sessionId);
   }
