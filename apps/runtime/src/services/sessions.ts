@@ -41,6 +41,7 @@ export interface SessionListener {
 export class SessionService {
   private live = new Map<string, Live>();
   private listeners: SessionListener[] = [];
+  private sendGuards: ((session: AgentSession) => Promise<void>)[] = [];
 
   constructor(
     private readonly repo: SessionRepo,
@@ -50,6 +51,11 @@ export class SessionService {
     private readonly bus: EventBus,
     private readonly log: Logger,
   ) {}
+
+  /** Registers a check run before any user turn is accepted (the task scheduler refuses sends into busy lanes). */
+  addSendGuard(guard: (session: AgentSession) => Promise<void>): void {
+    this.sendGuards.push(guard);
+  }
 
   addListener(l: SessionListener): void {
     this.listeners.push(l);
@@ -301,6 +307,7 @@ export class SessionService {
 
   async send(sessionId: string, text: string): Promise<AgentSession> {
     let session = await this.get(sessionId);
+    for (const guard of this.sendGuards) await guard(session);
     const live = this.live.get(sessionId);
     if (!live) {
       /* Reopened session: resume the provider conversation with the stored provider session id. */

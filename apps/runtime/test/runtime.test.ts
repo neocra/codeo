@@ -313,6 +313,25 @@ describe('orchestration and worktrees', () => {
     expect((await client.request('sessions.get', { sessionId: owner.id })).session.status).toBe('completed');
     await expect(client.request('sessions.send', { sessionId: owner.id, text: 'encore' })).rejects.toThrow(/n’existe plus/);
   });
+
+  it('refuses a send while another step works in the shared worktree, and once the task is closed', async () => {
+    fake.gate = makeGate();
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Garde', objective: 'Vérifier les envois', provider: 'claude-code', orchestration: 'pipeline',
+      subtasks: [agent({ title: 'Plan', role: 'planner' }), agent({ title: 'Code wait-me', role: 'backend' })],
+    });
+    await client.request('tasks.start', { taskId: task.id });
+    await waitFor(async () => (await client.request('tasks.get', { taskId: task.id })).subtasks[1]?.status === 'running');
+    const current = await client.request('tasks.get', { taskId: task.id });
+    const first = current.subtasks[0]!;
+    expect(first.status).toBe('completed');
+    await expect(client.request('sessions.send', { sessionId: first.sessionId!, text: 'encore' })).rejects.toThrow(/travaille déjà/);
+    fake.gate.open();
+    await waitTask(task.id, 'review');
+    await client.request('tasks.cancel', { taskId: task.id });
+    await expect(client.request('sessions.send', { sessionId: first.sessionId!, text: 'encore' })).rejects.toThrow(/terminée/);
+  });
+
 });
 
 describe('worktree recovery', () => {

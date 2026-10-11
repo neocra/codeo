@@ -14,6 +14,7 @@ import {
   type Task,
   type TaskStatus,
   type Worktree,
+  sharesWorktree,
 } from '@codeo/domain';
 import { newId, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
@@ -61,6 +62,7 @@ export class TaskService {
     private readonly bus: EventBus,
     private readonly log: Logger,
   ) {
+    sessions.addSendGuard((s) => this.assertSendAllowed(s));
     sessions.addListener({
       onStatus: (s) => {
         if (!s.taskId) return;
@@ -350,6 +352,28 @@ export class TaskService {
       .map((e) => e.text.trim());
     const text = parts.join('\n\n');
     return text.length > HANDOFF_MAX_CHARS ? `${text.slice(0, HANDOFF_MAX_CHARS)}…` : text;
+  }
+
+  /**
+   * A user may talk to a task's agent while the task is in review, failed or paused. Not when the task is
+   * closed (it would silently come back to life), and not when another step of the same worktree is
+   * working (two agents would edit the same files).
+   */
+  private async assertSendAllowed(session: AgentSession): Promise<void> {
+    if (!session.taskId) return;
+    const task = await this.repo.get(session.taskId);
+    if (!task) return;
+    const sub = task.subtasks.find((s) => s.sessionId === session.id);
+    if (!sub) return;
+    if (task.status === 'completed' || task.status === 'cancelled') {
+      throw new RuntimeError('CONFLICT', 'Cette tâche est terminée : créez une nouvelle tâche pour continuer.');
+    }
+    const occupied = task.subtasks.find(
+      (o) => o.id !== sub.id && (o.status === 'running' || o.status === 'waiting_approval') && (sharesWorktree(task.orchestration) || (o.worktreeId !== null && o.worktreeId === sub.worktreeId)),
+    );
+    if (occupied) {
+      throw new RuntimeError('CONFLICT', `L’étape « ${occupied.title} » travaille déjà dans ce worktree : attendez qu’elle termine.`);
+    }
   }
 
   private async onSessionStatus(session: AgentSession): Promise<void> {

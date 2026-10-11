@@ -57,6 +57,19 @@ export class WorktreeService {
     return w;
   }
 
+  /** The git worktree registered at `dir`, if any; git reports canonical paths (e.g. /private/tmp on macOS). */
+  private async registeredWorktree(repositoryPath: string, dir: string): Promise<{ path: string; branch: string | null } | null> {
+    const real = (p: string) => {
+      try {
+        return realpathSync.native(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    const target = real(dir);
+    return (await listWorktrees(repositoryPath).catch(() => [])).find((w) => real(w.path) === target) ?? null;
+  }
+
   private async baseRef(repository: Repository): Promise<string> {
     for (const ref of [repository.defaultBranch, `origin/${repository.defaultBranch}`, 'HEAD']) {
       if (await resolveCommit(repository.path, ref)) return ref;
@@ -75,7 +88,12 @@ export class WorktreeService {
     if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${repositoryId}`);
     const lane = sharesWorktree(task.orchestration) ? null : sub;
     const existing = await this.repo.findLane(task.id, repository.id, lane?.id ?? null);
-    if (existing && existsSync(existing.path)) return existing;
+    if (existing && existsSync(existing.path)) {
+      /* Reuse only a directory git still knows as this lane's worktree on its branch; anything else is foreign. */
+      const registered = await this.registeredWorktree(repository.path, existing.path);
+      if (registered?.branch === existing.branch) return existing;
+      throw new RuntimeError('CONFLICT', `Le dossier ${existing.path} n’est plus le worktree ${existing.branch} (${registered ? `branche ${registered.branch ?? '?'}` : 'non enregistré dans git'}) : déplacez-le ou supprimez-le.`);
+    }
     if (existing) {
       /* Directory deleted outside Codeo: forget it and clear git's stale registration; the branch is reattached below. */
       this.log.warn('worktree directory missing, recreating', { id: existing.id, path: existing.path });
@@ -90,15 +108,7 @@ export class WorktreeService {
        is adopted when git knows it on the expected branch; anything else at that path is refused, never deleted. */
     let created = false;
     if (existsSync(target)) {
-      /* git reports canonical paths (e.g. /private/tmp on macOS): compare real paths. */
-      const real = (p: string) => {
-        try {
-          return realpathSync.native(p);
-        } catch {
-          return path.resolve(p);
-        }
-      };
-      const registered = (await listWorktrees(repository.path).catch(() => [])).find((w) => real(w.path) === real(target));
+      const registered = await this.registeredWorktree(repository.path, target);
       if (!registered || registered.branch !== branch) {
         throw new RuntimeError('CONFLICT', `Le dossier ${target} existe déjà et n’est pas le worktree attendu (${branch}) : déplacez-le ou supprimez-le.`);
       }
