@@ -25,7 +25,8 @@ interface Live {
 
 /** Where a session runs when the task scheduler places it (worktree). Plain sessions run in the repository root. */
 export interface SessionPlacement {
-  cwd: string;
+  /** Absent: the repository root is used. */
+  cwd?: string | undefined;
   worktreeId: string | null;
   subtaskId: string | null;
 }
@@ -173,7 +174,7 @@ export class SessionService {
     };
     await this.repo.upsert(session);
     this.bus.publish('SessionCreated', { session });
-    return placement?.worktreeId ? this.worktreeLocks.run(laneKey(placement.cwd), () => this.launch(session, input.prompt)) : this.launch(session, input.prompt);
+    return placement?.worktreeId ? this.worktreeLocks.run(laneKey(cwd), () => this.launch(session, input.prompt)) : this.launch(session, input.prompt);
   }
 
   /** Starts (or resumes) the provider process behind a session and sends the prompt. */

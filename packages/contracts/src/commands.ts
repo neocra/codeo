@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { PROTOCOL_VERSION } from './version';
 import {
   AgentProviderIdSchema,
+  IdSchema,
   AgentRoleSchema,
   AgentSessionSchema,
   ApprovalRequestSchema,
@@ -70,7 +71,7 @@ export const SubtaskPlanSchema = z.object({
   provider: AgentProviderIdSchema,
   role: AgentRoleSchema.default('developer'),
   model: z.string().nullable().default(null),
-  repositoryId: z.string().nullable().default(null),
+  repositoryId: IdSchema.nullable().default(null),
   dependsOn: z.array(z.number().int().min(0)).default([]),
 });
 export type SubtaskPlan = z.infer<typeof SubtaskPlanSchema>;
@@ -94,26 +95,26 @@ export const commands = {
     'workspace:admin',
   ),
   'workspaces.addRepository': define(
-    z.object({ workspaceId: z.string(), path: z.string().min(1) }),
+    z.object({ workspaceId: IdSchema, path: z.string().min(1) }),
     WorkspaceSchema,
     'workspace:admin',
   ),
   'workspaces.removeRepository': define(
-    z.object({ workspaceId: z.string(), repositoryId: z.string() }),
+    z.object({ workspaceId: IdSchema, repositoryId: IdSchema }),
     WorkspaceSchema,
     'workspace:admin',
   ),
-  'workspaces.delete': define(z.object({ workspaceId: z.string() }), z.object({ deleted: z.boolean() }), 'workspace:admin'),
+  'workspaces.delete': define(z.object({ workspaceId: IdSchema }), z.object({ deleted: z.boolean() }), 'workspace:admin'),
 
-  'tasks.list': define(z.object({ workspaceId: z.string().optional() }), z.array(TaskSchema), 'read'),
-  'tasks.get': define(z.object({ taskId: z.string() }), TaskSchema, 'read'),
+  'tasks.list': define(z.object({ workspaceId: IdSchema.optional() }), z.array(TaskSchema), 'read'),
+  'tasks.get': define(z.object({ taskId: IdSchema }), TaskSchema, 'read'),
   'tasks.create': define(
     z.object({
-      workspaceId: z.string(),
+      workspaceId: IdSchema,
       title: z.string().min(1).max(200),
       objective: z.string().max(20_000).default(''),
       ticketKey: z.string().max(40).nullable().default(null),
-      repositoryIds: z.array(z.string()).default([]),
+      repositoryIds: z.array(IdSchema).default([]),
       /** Default agent; also the single agent when `subtasks` is empty. */
       provider: AgentProviderIdSchema,
       role: AgentRoleSchema.default('developer'),
@@ -127,41 +128,41 @@ export const commands = {
   ),
   /** Starts (or retries) a task; returns the sessions launched right away (later steps start as dependencies complete). */
   'tasks.start': define(
-    z.object({ taskId: z.string() }),
+    z.object({ taskId: IdSchema }),
     z.object({ task: TaskSchema, sessions: z.array(AgentSessionSchema) }),
     'session:write',
   ),
-  'tasks.cancel': define(z.object({ taskId: z.string() }), TaskSchema, 'session:write'),
-  'tasks.pause': define(z.object({ taskId: z.string() }), TaskSchema, 'session:write'),
-  'tasks.resume': define(z.object({ taskId: z.string() }), TaskSchema, 'session:write'),
+  'tasks.cancel': define(z.object({ taskId: IdSchema }), TaskSchema, 'session:write'),
+  'tasks.pause': define(z.object({ taskId: IdSchema }), TaskSchema, 'session:write'),
+  'tasks.resume': define(z.object({ taskId: IdSchema }), TaskSchema, 'session:write'),
 
   'worktrees.list': define(
-    z.object({ workspaceId: z.string().optional(), taskId: z.string().optional() }),
+    z.object({ workspaceId: IdSchema.optional(), taskId: IdSchema.optional() }),
     z.array(WorktreeSchema),
     'read',
   ),
   /** Removes a worktree directory (its branch is kept). Refused while dirty unless `force`, and while an agent works in it. */
   'worktrees.remove': define(
-    z.object({ worktreeId: z.string(), force: z.boolean().default(false) }),
+    z.object({ worktreeId: IdSchema, force: z.boolean().default(false) }),
     z.object({ removed: z.boolean() }),
     'workspace:admin',
   ),
 
   'sessions.list': define(
-    z.object({ workspaceId: z.string().optional(), taskId: z.string().optional() }),
+    z.object({ workspaceId: IdSchema.optional(), taskId: IdSchema.optional() }),
     z.array(AgentSessionSchema),
     'read',
   ),
   'sessions.get': define(
-    z.object({ sessionId: z.string(), afterSeq: z.number().int().default(0) }),
+    z.object({ sessionId: IdSchema, afterSeq: z.number().int().default(0) }),
     z.object({ session: AgentSessionSchema, entries: z.array(SessionEntrySchema) }),
     'read',
   ),
   'sessions.start': define(
     z.object({
-      workspaceId: z.string(),
-      repositoryId: z.string().nullable().default(null),
-      taskId: z.string().nullable().default(null),
+      workspaceId: IdSchema,
+      repositoryId: IdSchema.nullable().default(null),
+      taskId: IdSchema.nullable().default(null),
       provider: AgentProviderIdSchema,
       role: AgentRoleSchema.default('developer'),
       title: z.string().max(200).optional(),
@@ -172,20 +173,20 @@ export const commands = {
     'session:write',
   ),
   'sessions.send': define(
-    z.object({ sessionId: z.string(), text: z.string().min(1).max(50_000) }),
+    z.object({ sessionId: IdSchema, text: z.string().min(1).max(50_000) }),
     AgentSessionSchema,
     'session:write',
   ),
-  'sessions.cancel': define(z.object({ sessionId: z.string() }), AgentSessionSchema, 'session:write'),
+  'sessions.cancel': define(z.object({ sessionId: IdSchema }), AgentSessionSchema, 'session:write'),
 
   'approvals.list': define(
-    z.object({ status: ApprovalRequestSchema.shape.status.optional(), workspaceId: z.string().optional() }),
+    z.object({ status: ApprovalRequestSchema.shape.status.optional(), workspaceId: IdSchema.optional() }),
     z.array(ApprovalRequestSchema),
     'read',
   ),
   'approvals.resolve': define(
     z.object({
-      approvalId: z.string(),
+      approvalId: IdSchema,
       decision: z.enum(['approve', 'reject']),
       reason: z.string().max(500).optional(),
     }),
@@ -193,7 +194,7 @@ export const commands = {
     'approval:decide',
   ),
 
-  'home.summary': define(z.object({ workspaceId: z.string().optional() }), HomeSummarySchema, 'read'),
+  'home.summary': define(z.object({ workspaceId: IdSchema.optional() }), HomeSummarySchema, 'read'),
 } as const;
 
 export type CommandName = keyof typeof commands;

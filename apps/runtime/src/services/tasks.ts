@@ -15,6 +15,7 @@ import {
   type TaskStatus,
   type Worktree,
   sharesWorktree,
+  type SessionEntry,
 } from '@codeo/domain';
 import { newId, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
@@ -358,7 +359,8 @@ export class TaskService {
         prompt: await this.buildPrompt(task, sub, worktree),
         model: sub.assignment.model,
       },
-      worktree ? { cwd: worktree.path, worktreeId: worktree.id, subtaskId: sub.id } : undefined,
+      /* The subtask id is always persisted on the session so crash recovery can match it, worktree or not. */
+      { ...(worktree ? { cwd: worktree.path } : {}), worktreeId: worktree?.id ?? null, subtaskId: sub.id },
     );
     return { session, worktree };
   }
@@ -398,9 +400,22 @@ export class TaskService {
     return lines.filter((l) => l !== null).join('\n').trim();
   }
 
+  /** The whole transcript: `entries()` pages by 2,000, and a long step can exceed one page. */
+  private async allEntries(sessionId: string): Promise<SessionEntry[]> {
+    const all: SessionEntry[] = [];
+    let afterSeq = 0;
+    for (;;) {
+      const page = await this.sessions.entries(sessionId, afterSeq);
+      all.push(...page);
+      const last = page[page.length - 1];
+      if (!last || page.length < 2000) return all;
+      afterSeq = last.seq;
+    }
+  }
+
   /** Everything the agent said in its last turn (a turn can hold several text blocks), capped for the prompt. */
   private async lastAssistantText(sessionId: string): Promise<string> {
-    const entries = await this.sessions.entries(sessionId, 0);
+    const entries = await this.allEntries(sessionId);
     const lastUser = entries.map((e) => e.kind).lastIndexOf('user_message');
     const parts = entries
       .slice(lastUser + 1)
