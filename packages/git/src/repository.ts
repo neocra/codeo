@@ -72,6 +72,11 @@ export async function isDirty(root: string): Promise<boolean> {
   return stdout.trim().length > 0;
 }
 
+/** Drops git's registrations of worktrees whose directories no longer exist. */
+export async function pruneWorktrees(root: string): Promise<void> {
+  await git(['worktree', 'prune'], { cwd: assertAbsolutePath(root, 'root') });
+}
+
 export async function listWorktrees(root: string): Promise<WorktreeInfo[]> {
   const { stdout } = await git(['worktree', 'list', '--porcelain'], { cwd: root });
   const out: WorktreeInfo[] = [];

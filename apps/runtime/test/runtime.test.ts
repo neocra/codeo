@@ -315,6 +315,25 @@ describe('orchestration and worktrees', () => {
   });
 });
 
+describe('worktree recovery', () => {
+  it('recreates a worktree whose directory was deleted outside Codeo, on the same branch', async () => {
+    const [ws] = await client.request('workspaces.list', {});
+    const task = await runtime.services.tasks.create({ workspaceId: ws!.id, title: 'Recréer', objective: '', ticketKey: null, repositoryIds: [], provider: 'claude-code', role: 'developer', model: null, orchestration: 'single', isolation: 'worktree', subtasks: [] });
+    const sub = task.subtasks[0]!;
+    const repoId = ws!.repositories[0]!.id;
+    const first = await runtime.services.worktrees.ensureForSubtask(task, sub, repoId);
+    expect(existsSync(first.path)).toBe(true);
+    rmSync(first.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    const again = await runtime.services.worktrees.ensureForSubtask(task, sub, repoId);
+    expect(again.id).not.toBe(first.id);
+    expect(again.path).toBe(first.path);
+    expect(again.branch).toBe(first.branch);
+    expect(existsSync(again.path)).toBe(true);
+    expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(1);
+    await runtime.services.worktrees.remove(again.id, { force: true });
+  });
+});
+
 describe('shutdown', () => {
   it('leaves tasks in review untouched when their idle agents disconnect', { timeout: 60_000 }, async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'codeo-rt2-'));

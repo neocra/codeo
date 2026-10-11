@@ -3,7 +3,7 @@ import path from 'node:path';
 import { RuntimeError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
-import { createWorktree, isDirty, removeWorktree, resolveCommit } from '@codeo/git';
+import { createWorktree, isDirty, pruneWorktrees, removeWorktree, resolveCommit } from '@codeo/git';
 import { newId, type KeyedLock, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { WorkspaceService } from './workspaces';
@@ -77,9 +77,10 @@ export class WorktreeService {
     const existing = await this.repo.findLane(task.id, repository.id, lane?.id ?? null);
     if (existing && existsSync(existing.path)) return existing;
     if (existing) {
-      /* Directory deleted outside Codeo: forget it, the branch is reattached below. */
+      /* Directory deleted outside Codeo: forget it and clear git's stale registration; the branch is reattached below. */
       this.log.warn('worktree directory missing, recreating', { id: existing.id, path: existing.path });
       await this.repo.delete(existing.id);
+      await pruneWorktrees(repository.path);
     }
     const baseBranch = await this.baseRef(repository);
     const branch = worktreeBranch(task, lane);
