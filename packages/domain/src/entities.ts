@@ -147,6 +147,8 @@ export const SubtaskSchema = z.object({
   sessionId: IdSchema.nullable().default(null),
   worktreeId: IdSchema.nullable().default(null),
   order: z.number().int(),
+  /** Provider or launch error when the subtask failed; kept so the task's final failure reports it. */
+  error: z.string().nullable().default(null),
 });
 export type Subtask = z.infer<typeof SubtaskSchema>;
 

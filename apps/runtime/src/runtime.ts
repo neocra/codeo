@@ -96,6 +96,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     void providers.detectAll().then((list) => log.info('providers detected', { providers: list.map((p) => `${p.provider}:${p.installed ? p.version : 'absent'}:${p.authenticated}`) }));
   }
 
+  /* Worktrees hold agent work: a workspace or repository cannot disappear from under them. */
+  async function assertNoWorktrees(workspaceId: string, repositoryId?: string): Promise<void> {
+    const existing = (await worktrees.list({ workspaceId })).filter((w) => !repositoryId || w.repositoryId === repositoryId);
+    if (existing.length) {
+      throw new RuntimeError('CONFLICT', `Supprimez d’abord les ${existing.length} worktree(s) associés (${existing.map((w) => w.branch).join(', ')}).`);
+    }
+  }
+
   const handlers: Handlers = {
     'runtime.info': async () => info,
     'providers.list': async ({ refresh }) => (refresh || providers.list().length === 0 ? providers.detectAll() : providers.list()),
@@ -103,8 +111,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'workspaces.list': async () => workspaces.list(),
     'workspaces.create': async (p) => workspaces.create(p),
     'workspaces.addRepository': async (p) => workspaces.addRepository(p.workspaceId, p.path),
-    'workspaces.removeRepository': async (p) => workspaces.removeRepository(p.workspaceId, p.repositoryId),
-    'workspaces.delete': async (p) => ({ deleted: await workspaces.delete(p.workspaceId) }),
+    'workspaces.removeRepository': async (p) => {
+      await assertNoWorktrees(p.workspaceId, p.repositoryId);
+      return workspaces.removeRepository(p.workspaceId, p.repositoryId);
+    },
+    'workspaces.delete': async (p) => {
+      await assertNoWorktrees(p.workspaceId);
+      return { deleted: await workspaces.delete(p.workspaceId) };
+    },
     'tasks.list': async (p) => tasks.list(p.workspaceId),
     'tasks.get': async (p) => tasks.get(p.taskId),
     'tasks.create': async (p) => tasks.create(p),
@@ -115,10 +129,9 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'worktrees.list': async (p) => worktrees.list(p),
     'worktrees.remove': async (p) => {
       const wt = await worktrees.get(p.worktreeId);
-      const busy = (await sessions.list(wt.taskId ? { taskId: wt.taskId } : { workspaceId: wt.workspaceId })).some(
-        (s) => s.worktreeId === wt.id && sessions.isLive(s.id) && (s.status === 'running' || s.status === 'waiting_approval'),
-      );
-      if (busy) throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
+      /* Any live session (running, waiting, or idle but resumable) still owns the directory. */
+      const busy = (await sessions.list({ workspaceId: wt.workspaceId })).some((s) => s.worktreeId === wt.id && sessions.isLive(s.id));
+      if (busy) throw new RuntimeError('CONFLICT', 'Une session est encore ouverte dans ce worktree : arrêtez-la d’abord.');
       return { removed: await worktrees.remove(p.worktreeId, { force: p.force }) };
     },
     'sessions.list': async (p) => sessions.list(p),

@@ -2,6 +2,7 @@ import { roleInstructions, type ProviderEvent, type ProviderSessionHandle } from
 import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { SessionRepo } from '@codeo/database';
 import { sessionTransition, type AgentSession, type SessionEntry, type SessionStatus, type Workspace } from '@codeo/domain';
+import { existsSync } from 'node:fs';
 import { newId, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { ApprovalService } from './approvals';
@@ -158,6 +159,9 @@ export class SessionService {
 
   /** Starts (or resumes) the provider process behind a session and sends the prompt. */
   private async launch(session: AgentSession, prompt: string): Promise<AgentSession> {
+    if (!existsSync(session.cwd)) {
+      throw new RuntimeError('CONFLICT', `Le dossier de travail de cette session n’existe plus (${session.cwd}) : le worktree a été supprimé.`);
+    }
     const provider = this.providers.get(session.provider);
     const status = this.providers.status(session.provider);
     if (!status?.installed) {

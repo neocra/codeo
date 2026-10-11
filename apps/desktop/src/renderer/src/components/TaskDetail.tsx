@@ -49,7 +49,12 @@ export function TaskDetail({ task }: { task: Task }) {
             const wt = s.worktreeId ? wtById.get(s.worktreeId) : undefined;
             const open = s.sessionId ? () => openSession(s.sessionId!) : undefined;
             return (
-              <div key={s.id} className="cd-list-row" role={open ? 'button' : undefined} tabIndex={open ? 0 : undefined} onClick={open} onKeyDown={(e) => e.key === 'Enter' && open?.()} style={open ? undefined : { cursor: 'default' }}>
+              <div key={s.id} className="cd-list-row" role={open ? 'button' : undefined} tabIndex={open ? 0 : undefined} onClick={open} onKeyDown={(e) => {
+                  if (open && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    open();
+                  }
+                }} style={open ? undefined : { cursor: 'default' }}>
                 <StatusPill key={st.tone} tone={st.tone}>
                   {t(st.key)}
                 </StatusPill>

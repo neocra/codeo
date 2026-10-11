@@ -169,7 +169,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
           </Select>
         </Field>
         <Field label={t('tasks.create.isolation')} hint={parallelMode ? t('tasks.create.isolation.required') : t('tasks.create.isolation.hint')}>
-          <Choice type="checkbox" checked={isolated} onChange={() => !parallelMode && setIsolated((v) => !v)} label={isolated ? t('tasks.isolation.worktree') : t('tasks.isolation.none')} />
+          <Choice type="checkbox" checked={isolated} disabled={parallelMode} onChange={() => !parallelMode && setIsolated((v) => !v)} label={isolated ? t('tasks.isolation.worktree') : t('tasks.isolation.none')} />
         </Field>
 
         {mode === 'single' ? (

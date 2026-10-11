@@ -158,6 +158,7 @@ export class TaskService {
         status: 'pending',
         sessionId: null,
         worktreeId: null,
+        error: null,
         order: i,
       };
     });
@@ -272,12 +273,14 @@ export class TaskService {
           const message = err instanceof Error ? err.message : String(err);
           this.log.warn('subtask launch failed', { taskId: task.id, subtaskId: sub.id, err: message });
           errors.push(message);
-          task = patchSubtask(task, sub.id, { status: 'failed' });
+          task = patchSubtask(task, sub.id, { status: 'failed', error: message });
         }
       }
     }
     const status = FROZEN.includes(task.status) ? task.status : aggregateTaskStatus(task);
-    const saved = await this.save(task, status, { progress: status === 'review' ? 90 : taskProgress(task) }, errors[0]);
+    /* A failure observed earlier (parallel mode) must still be reported when the task finally fails. */
+    const failureCause = errors[0] ?? task.subtasks.find((s) => s.status === 'failed' && s.error)?.error ?? undefined;
+    const saved = await this.save(task, status, { progress: status === 'review' ? 90 : taskProgress(task) }, failureCause);
     return { task: saved, sessions, errors };
   }
 
@@ -323,11 +326,12 @@ export class TaskService {
       lines.push('', 'Les étapes précédentes ont été réalisées dans ce même dossier : pars de leur travail.');
     }
     if (task.orchestration === 'pipeline') {
-      const byId = new Map(task.subtasks.map((s) => [s.id, s]));
+      /* Each step receives the output of every earlier step, not only its direct dependency. */
+      const ordered = orderedSubtasks(task);
+      const earlier = ordered.slice(0, ordered.findIndex((s) => s.id === sub.id));
       const handoffs: string[] = [];
-      for (const depId of subtaskDependencies(task, sub)) {
-        const dep = byId.get(depId);
-        if (!dep?.sessionId) continue;
+      for (const dep of earlier) {
+        if (!dep.sessionId) continue;
         const output = await this.lastAssistantText(dep.sessionId);
         handoffs.push(`### ${dep.title} (${dep.assignment.role})`, output || '(aucune sortie)', '');
       }
@@ -359,7 +363,7 @@ export class TaskService {
     }
     const status = SUBTASK_STATUS_FROM_SESSION[session.status];
     if (!status) return;
-    task = patchSubtask(task, sub.id, { status });
+    task = patchSubtask(task, sub.id, status === 'failed' ? { status, error: session.error ?? sub.error } : { status });
     await this.advance(task, status === 'failed' ? (session.error ?? undefined) : undefined);
   }
 }

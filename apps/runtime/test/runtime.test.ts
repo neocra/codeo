@@ -88,12 +88,21 @@ beforeAll(async () => {
   client = new RuntimeClient({ url: `ws://127.0.0.1:${server.port}`, token: TOKEN, client: { name: 'test', version: '0', kind: 'test' }, createWebSocket: (u) => new WebSocket(u) as never, reconnect: false });
   await client.connect();
 });
+/** Windows keeps handles on SQLite WAL and git files briefly after close: retry, and never fail the suite on cleanup. */
+function cleanupDir(dir: string) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (err) {
+    console.warn(`cleanup of ${dir} skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 afterAll(async () => {
   client.close();
   await server.close();
   await runtime.shutdown();
-  rmSync(repoDir, { recursive: true, force: true });
-  rmSync(worktreesDir, { recursive: true, force: true });
+  cleanupDir(repoDir);
+  cleanupDir(worktreesDir);
 });
 
 const waitFor = async (pred: () => boolean | Promise<boolean>, ms = 3000) => {
@@ -290,12 +299,20 @@ describe('orchestration and worktrees', () => {
     const [wt] = await client.request('worktrees.list', { taskId: task.id });
     writeFileSync(path.join(wt!.path, 'travail.txt'), 'non commité');
     expect((await client.request('worktrees.list', { taskId: task.id }))[0]?.dirty).toBe(true);
+    /* An idle session is still live (resumable): the worktree stays until it is stopped. */
+    const owner = (await client.request('sessions.list', { taskId: task.id })).find((s) => s.worktreeId === wt!.id)!;
+    await expect(client.request('worktrees.remove', { worktreeId: wt!.id, force: true })).rejects.toThrow(/session est encore ouverte/);
+    await client.request('sessions.cancel', { sessionId: owner.id });
+    /* The workspace cannot disappear from under its worktrees either. */
+    await expect(client.request('workspaces.delete', { workspaceId: task.workspaceId })).rejects.toThrow(/worktree/);
     await expect(client.request('worktrees.remove', { worktreeId: wt!.id })).rejects.toThrow(/non commitées/);
     expect(existsSync(wt!.path)).toBe(true);
     expect(await client.request('worktrees.remove', { worktreeId: wt!.id, force: true })).toEqual({ removed: true });
     expect(existsSync(wt!.path)).toBe(false);
     expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(0);
     await expect(git(['show-ref', '--verify', `refs/heads/${wt!.branch}`], { cwd: repoDir })).resolves.toBeTruthy();
+    /* The session that lived there can no longer be resumed into a missing directory. */
+    await expect(client.request('sessions.send', { sessionId: owner.id, text: 'encore' })).rejects.toThrow(/n’existe plus/);
   });
 });
 
@@ -315,6 +332,6 @@ describe('shutdown', () => {
     for (const w of await git(['worktree', 'list', '--porcelain'], { cwd: repoDir }).then((r) => r.stdout.split('\n').filter((l) => l.startsWith('worktree ') && l.includes(dir)))) {
       await git(['worktree', 'remove', '--force', w.slice(9)], { cwd: repoDir });
     }
-    rmSync(dir, { recursive: true, force: true });
+    cleanupDir(dir);
   });
 });

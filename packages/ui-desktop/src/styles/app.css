@@ -86,6 +86,9 @@ a { color: var(--sky); text-decoration: none; }
 .cd-choice { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--bg-300); cursor: pointer; font: var(--text-body); transition: border-color var(--dur-instant) var(--ease-standard); }
 .cd-choice:hover { background: var(--bg-400); }
 .cd-choice.is-on { border-color: var(--mint); background: var(--mint-soft); color: var(--ink); }
+.cd-choice.is-disabled { opacity: .45; cursor: default; }
+.cd-choice.is-disabled:hover { background: var(--bg-300); }
+.cd-choice.is-disabled.is-on:hover { background: var(--mint-soft); }
 .cd-choice input { accent-color: var(--mint); }
 .cd-choice__sub { display: block; color: var(--ink-muted); font: var(--text-body-sm); }
 
