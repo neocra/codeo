@@ -179,8 +179,12 @@ export class SessionService {
   /** Starts (or resumes) the provider process behind a session and sends the prompt. */
   private async launch(session: AgentSession, prompt: string): Promise<AgentSession> {
     if (!existsSync(session.cwd)) {
-      throw new RuntimeError('CONFLICT', `Le dossier de travail de cette session n’existe plus (${session.cwd}) : le worktree a été supprimé.`);
+      const message = `Le dossier de travail de cette session n’existe plus (${session.cwd}) : le worktree a été supprimé.`;
+      /* Leave a terminal state behind, as the provider-unavailable path does, so recovery never resumes it. */
+      await this.setStatus(session, session.status === 'created' ? 'failed' : 'completed', message);
+      throw new RuntimeError('CONFLICT', message);
     }
+    if (this.closed) throw new RuntimeError('CONFLICT', 'Le runtime s’arrête : aucune session ne peut démarrer.');
     const provider = this.providers.get(session.provider);
     const status = this.providers.status(session.provider);
     if (!status?.installed) {
@@ -398,10 +402,16 @@ export class SessionService {
 
   async shutdown(): Promise<void> {
     for (const [id, live] of this.live) {
+      await live.handle.close().catch((err) => this.log.warn('provider close failed at shutdown', { id, err: String(err) }));
       this.live.delete(id);
-      await live.handle.close().catch(() => undefined);
       const s = await this.repo.get(id);
       if (s) await this.setStatus(s, 'disconnected', 'Runtime arrêté.');
     }
+  }
+
+  /** After shutdown: nothing may start (a late scheduler callback must not spawn a provider). */
+  private closed = false;
+  markClosed(): void {
+    this.closed = true;
   }
 }

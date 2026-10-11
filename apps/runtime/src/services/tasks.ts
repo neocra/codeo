@@ -114,8 +114,11 @@ export class TaskService {
     return t;
   }
 
-  /** Resolves once every queued task mutation has run (shutdown). */
+  private stopping = false;
+
+  /** Shutdown step 1: refuse new launches, then let every queued mutation finish. Call before closing sessions. */
   async drain(): Promise<void> {
+    this.stopping = true;
     while (this.locks.size) await Promise.all(this.locks.values());
   }
 
@@ -223,7 +226,12 @@ export class TaskService {
       /* Replaced sessions are closed first so an old provider handle cannot keep working beside the retry. */
       for (const s of task.subtasks) {
         if ((s.status === 'failed' || s.status === 'cancelled') && s.sessionId && this.sessions.isLive(s.sessionId)) {
-          await this.sessions.cancel(s.sessionId).catch((err) => this.log.warn('could not close replaced session', { sessionId: s.sessionId, err: String(err) }));
+          try {
+            await this.sessions.cancel(s.sessionId);
+          } catch (err) {
+            /* No replacement while the old agent may still hold the worktree. */
+            throw new RuntimeError('CONFLICT', `Impossible de fermer l’ancienne session de « ${s.title} » : ${err instanceof Error ? err.message : String(err)}. Réessayez.`);
+          }
         }
       }
       const subtasks = task.subtasks.map((s) => (s.status === 'failed' || s.status === 'cancelled' ? { ...s, status: 'pending' as const, sessionId: null, error: null } : s));
@@ -241,6 +249,7 @@ export class TaskService {
       const updated = await this.save(task, 'cancelled', {
         subtasks: task.subtasks.map((s) => (['pending', 'running', 'waiting_approval'].includes(s.status) ? { ...s, status: 'cancelled' } : s)),
       });
+      /* A stop failure is reported, not swallowed: the task stays cancelled and the command can be retried. */
       await this.stopSessions(task);
       return updated;
     });
@@ -250,8 +259,10 @@ export class TaskService {
   pause(taskId: string): Promise<Task> {
     return this.locked(taskId, async () => {
       const task = await this.get(taskId);
-      if (!['queued', 'running', 'waiting_approval'].includes(task.status)) throw new RuntimeError('CONFLICT', 'Seule une tâche en cours peut être mise en pause.');
+      const retryingStop = task.status === 'paused' && task.subtasks.some((s) => s.sessionId && this.sessions.isLive(s.sessionId));
+      if (!retryingStop && !['queued', 'running', 'waiting_approval'].includes(task.status)) throw new RuntimeError('CONFLICT', 'Seule une tâche en cours peut être mise en pause.');
       const updated = await this.save(task, 'paused');
+      /* If an agent could not be stopped the error surfaces; the task stays paused so `pause` can be retried. */
       await this.stopSessions(task);
       return updated;
     });
@@ -278,10 +289,20 @@ export class TaskService {
     });
   }
 
+  /** Stops every live agent of the task; tries them all, then reports the first failure (the handles that failed stay live). */
   private async stopSessions(task: Task): Promise<void> {
+    const failures: string[] = [];
     for (const s of task.subtasks) {
-      if (s.sessionId && this.sessions.isLive(s.sessionId)) await this.sessions.cancel(s.sessionId).catch((err) => this.log.warn('session cancel failed', { sessionId: s.sessionId, err: String(err) }));
+      if (!s.sessionId || !this.sessions.isLive(s.sessionId)) continue;
+      try {
+        await this.sessions.cancel(s.sessionId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.log.error('session stop failed', { sessionId: s.sessionId, err: message });
+        failures.push(`${s.title} : ${message}`);
+      }
     }
+    if (failures.length) throw new RuntimeError('INTERNAL', `Un agent n’a pas pu être arrêté — ${failures.join(' ; ')}. Réessayez l’arrêt.`);
   }
 
   /**
@@ -293,7 +314,8 @@ export class TaskService {
     const errors: string[] = cause ? [cause] : [];
     for (;;) {
       for (const b of blockedSubtasks(task)) task = patchSubtask(task, b.id, { status: 'cancelled' });
-      const runnable = SCHEDULABLE.includes(task.status) ? runnableSubtasks(task) : [];
+      /* While shutting down nothing new starts: the task is paused at boot and resumed by the user. */
+      const runnable = !this.stopping && SCHEDULABLE.includes(task.status) ? runnableSubtasks(task) : [];
       if (!runnable.length) break;
       for (const sub of runnable) {
         try {

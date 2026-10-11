@@ -196,9 +196,13 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     services: { providers, workspaces, sessions, tasks, approvals, worktrees },
     call,
     async shutdown() {
+      /* 1. the scheduler stops launching and finishes queued mutations; 2. agents are closed (their
+         completion callbacks are drained again, now unable to launch); 3. nothing can start; 4. persist. */
       approvals.shutdown();
+      await tasks.drain();
       await sessions.shutdown();
       await tasks.drain();
+      sessions.markClosed();
       await bus.flush();
       db.close();
     },
