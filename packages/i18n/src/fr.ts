@@ -275,6 +275,8 @@ export const fr = {
   'runtime.error.task.draftSend': 'La tâche n’est pas démarrée.',
   'runtime.error.lane.occupied': 'L’étape « {step} » travaille déjà dans ce worktree : attendez qu’elle termine.',
   'runtime.error.lane.dependentsDone': 'L’étape « {step} » s’appuie déjà sur ce travail : redémarrez la tâche pour relancer la chaîne.',
+  'runtime.error.session.startFailed': 'Le démarrage de la session a échoué : {reason}',
+  'runtime.error.session.startFailedLive': 'Démarrage interrompu et agent toujours actif ({reason}) : arrêtez la session avant de réessayer.',
   'runtime.error.session.replaced': 'Cette session a été remplacée par une nouvelle tentative : ouvrez la session actuelle de l’étape.',
   'runtime.error.session.dirGone': 'Le dossier de travail de cette session n’existe plus ({path}) : le worktree a été supprimé.',
   'runtime.error.session.noProviderId': 'Cette session ne peut pas être reprise (aucun identifiant fournisseur).',

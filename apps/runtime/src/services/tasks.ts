@@ -343,7 +343,10 @@ export class TaskService {
           const message = err instanceof Error ? err.message : String(err);
           this.log.warn('subtask launch failed', { taskId: task.id, subtaskId: sub.id, err: message });
           errors.push(message);
-          task = patchSubtask(task, sub.id, { status: 'failed', error: message });
+          /* A session that got as far as existing is recorded, so the retry closes it before launching a replacement. */
+          const startedSessionId = err instanceof RuntimeError && err.details && typeof err.details === 'object' && typeof (err.details as { sessionId?: unknown }).sessionId === 'string' ? (err.details as { sessionId: string }).sessionId : null;
+          task = patchSubtask(task, sub.id, { status: 'failed', error: message, ...(startedSessionId ? { sessionId: startedSessionId } : {}) });
+          if (startedSessionId) await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
         }
       }
     }

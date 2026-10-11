@@ -247,14 +247,25 @@ export class SessionService {
       await live.handle.send(prompt);
       return current;
     } catch (err) {
-      this.live.delete(sessionId);
-      this.approvals.cancelForSession(sessionId);
-      await live.handle.close().catch((e) => this.log.error('could not close partially started session', { sessionId, err: String(e) }));
       const message = err instanceof Error ? err.message : String(err);
+      this.approvals.cancelForSession(sessionId);
+      try {
+        await live.handle.close();
+      } catch (closeErr) {
+        /* The provider may still be running: keep it tracked (live) so a retry must close it first, and tell the caller which session. */
+        this.log.error('could not close partially started session', { sessionId, err: String(closeErr) });
+        throw new RuntimeError('INTERNAL', `Démarrage interrompu et agent toujours actif (${message}) : arrêtez la session avant de réessayer.`, {
+          key: 'session.startFailedLive',
+          params: { reason: message },
+          sessionId,
+        });
+      }
+      this.live.delete(sessionId);
       const latest = await this.get(sessionId);
       const terminal = canTransitionSession(latest.status, 'failed') ? 'failed' : canTransitionSession(latest.status, 'completed') ? 'completed' : null;
       if (terminal) await this.setStatus(latest, terminal, message);
-      throw err instanceof RuntimeError ? err : new RuntimeError('PROVIDER_UNAVAILABLE', message);
+      const details = err instanceof RuntimeError && err.details && typeof err.details === 'object' ? { ...(err.details as object), sessionId } : { key: 'session.startFailed', params: { reason: message }, sessionId };
+      throw new RuntimeError(err instanceof RuntimeError ? err.code : 'PROVIDER_UNAVAILABLE', message, details);
     }
   }
 
