@@ -11,7 +11,7 @@ import { createLogger, KeyedLock, newId, type Logger } from '@codeo/shared-utils
 import { EventBus } from './event-bus';
 import { ApprovalService } from './services/approvals';
 import { ProviderRegistry } from './services/providers';
-import { SessionService } from './services/sessions';
+import { laneKey, SessionService } from './services/sessions';
 import { TaskService } from './services/tasks';
 import { WorkspaceService } from './services/workspaces';
 import { WorktreeService } from './services/worktrees';
@@ -131,12 +131,13 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'tasks.pause': async (p) => tasks.pause(p.taskId),
     'tasks.resume': async (p) => tasks.resume(p.taskId),
     'worktrees.list': async (p) => worktrees.list(p),
-    'worktrees.remove': async (p) =>
-      /* Same lock as session launch/send into this worktree: owners cannot change under our feet. */
-      worktreeLocks.run(p.worktreeId, async () => {
+    'worktrees.remove': async (p) => {
+      const target = await worktrees.get(p.worktreeId);
+      /* Same lock as session launch/send into this directory (keyed by path: a recreated lane keeps it). */
+      return worktreeLocks.run(laneKey(target.path), async () => {
         const wt = await worktrees.get(p.worktreeId);
         /* A working agent keeps its worktree; idle sessions are closed with it (they cannot resume without the directory). */
-        const owners = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => s.worktreeId === wt.id && sessions.isLive(s.id));
+        const owners = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => (s.worktreeId === wt.id || laneKey(s.cwd) === laneKey(wt.path)) && sessions.isLive(s.id));
         if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
           throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
         }
@@ -147,7 +148,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
           },
         });
         return { removed };
-      }),
+      });
+    },
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),
     'sessions.start': async (p) => sessions.start(p),

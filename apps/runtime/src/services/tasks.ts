@@ -95,7 +95,9 @@ export class TaskService {
       const orphan = sessions.find((s) => s.subtaskId === sub.id);
       if (!orphan) continue;
       this.log.warn('reattaching orphaned session to its subtask', { taskId: task.id, subtaskId: sub.id, sessionId: orphan.id });
-      task = patchSubtask(task, sub.id, { status: sub.status === 'pending' ? 'running' : sub.status, sessionId: orphan.id, worktreeId: orphan.worktreeId ?? sub.worktreeId });
+      /* The session's persisted outcome wins: finished work is not rerun, a disconnected agent is resumable work. */
+      const recovered = orphan.status === 'disconnected' || orphan.status === 'created' ? 'running' : (SUBTASK_STATUS_FROM_SESSION[orphan.status] ?? 'running');
+      task = patchSubtask(task, sub.id, { status: recovered, sessionId: orphan.id, worktreeId: orphan.worktreeId ?? sub.worktreeId, error: recovered === 'failed' ? (orphan.error ?? sub.error) : sub.error });
       changed = true;
     }
     if (changed) await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });

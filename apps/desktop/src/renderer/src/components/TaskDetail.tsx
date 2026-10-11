@@ -115,7 +115,11 @@ function WorktreeRow({ worktree, busy }: { worktree: Worktree; busy: boolean }) 
   const remove = useMutation({
     mutationFn: (force: boolean) => invoke('worktrees.remove', { worktreeId: worktree.id, force }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['worktrees'] }),
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => {
+      setError(e instanceof Error ? e.message : String(e));
+      /* The dirty flag is a snapshot: refresh it so the next click offers the forced confirmation. */
+      void qc.invalidateQueries({ queryKey: ['worktrees'] });
+    },
   });
   return (
     <div className="cd-stack cd-stack--sm">

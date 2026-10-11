@@ -3,6 +3,7 @@ import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { SessionRepo } from '@codeo/database';
 import { sessionTransition, type AgentSession, type SessionEntry, type SessionStatus, type Workspace } from '@codeo/domain';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { KeyedLock, newId, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { ApprovalService } from './approvals';
@@ -27,6 +28,11 @@ export interface SessionPlacement {
   cwd: string;
   worktreeId: string | null;
   subtaskId: string | null;
+}
+
+/** Worktree locks are keyed by directory: a recreated lane gets a new id but the same path, and old sessions keep that path. */
+export function laneKey(dir: string): string {
+  return path.resolve(dir);
 }
 
 export type SendInterceptor = (session: AgentSession, next: () => Promise<AgentSession>) => Promise<AgentSession>;
@@ -167,7 +173,7 @@ export class SessionService {
     };
     await this.repo.upsert(session);
     this.bus.publish('SessionCreated', { session });
-    return placement?.worktreeId ? this.worktreeLocks.run(placement.worktreeId, () => this.launch(session, input.prompt)) : this.launch(session, input.prompt);
+    return placement?.worktreeId ? this.worktreeLocks.run(laneKey(placement.cwd), () => this.launch(session, input.prompt)) : this.launch(session, input.prompt);
   }
 
   /** Starts (or resumes) the provider process behind a session and sends the prompt. */
@@ -318,7 +324,7 @@ export class SessionService {
   /** `fromScheduler`: the task scheduler already holds the task lock, so interceptors are skipped (they would deadlock). */
   async send(sessionId: string, text: string, opts: { fromScheduler?: boolean } = {}): Promise<AgentSession> {
     const session = await this.get(sessionId);
-    const inner = () => (session.worktreeId ? this.worktreeLocks.run(session.worktreeId, () => this.sendUnlocked(sessionId, text)) : this.sendUnlocked(sessionId, text));
+    const inner = () => (session.worktreeId ? this.worktreeLocks.run(laneKey(session.cwd), () => this.sendUnlocked(sessionId, text)) : this.sendUnlocked(sessionId, text));
     if (opts.fromScheduler) return inner();
     return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>((next, interceptor) => () => interceptor(session, next), inner)();
   }
@@ -343,7 +349,7 @@ export class SessionService {
 
   /** Runs `fn` under the session's worktree lock (none when the session is not in a worktree). */
   private inWorktree<T>(session: AgentSession, fn: () => Promise<T>): Promise<T> {
-    return session.worktreeId ? this.worktreeLocks.run(session.worktreeId, fn) : fn();
+    return session.worktreeId ? this.worktreeLocks.run(laneKey(session.cwd), fn) : fn();
   }
 
   async cancel(sessionId: string): Promise<AgentSession> {
