@@ -1,0 +1,48 @@
+{
+  "name": "@codeo/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Codeo Desktop \u2014 orchestrate AI coding agents.",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "predev": "pnpm --filter @codeo/runtime build",
+    "dev": "electron-vite dev",
+    "build": "pnpm --filter @codeo/runtime build && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run --passWithNoTests",
+    "package": "pnpm build && electron-builder --config electron-builder.yml",
+    "package:mac": "pnpm build && electron-builder --config electron-builder.yml --mac",
+    "package:win": "pnpm build && electron-builder --config electron-builder.yml --win",
+    "package:linux": "pnpm build && electron-builder --config electron-builder.yml --linux",
+    "lint": "eslint . --max-warnings=200"
+  },
+  "dependencies": {
+    "@codeo/contracts": "workspace:*",
+    "@codeo/domain": "workspace:*",
+    "@codeo/i18n": "workspace:*",
+    "@codeo/remote-client": "workspace:*",
+    "@codeo/shared-utils": "workspace:*",
+    "@codeo/ui-desktop": "workspace:*",
+    "@codeo/ui-tokens": "workspace:*",
+    "@tanstack/react-query": "^5.90.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "ws": "^8.18.0",
+    "zod": "^4.1.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/ws": "^8.18.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.0.0",
+    "vitest": "^4.0.0"
+  }
+}

@@ -1,0 +1,563 @@
+{
+ "name": "Codeo Motion",
+ "version": 1,
+ "color": {
+  "themes": [
+   {
+    "id": "dark",
+    "name": "Dark"
+   },
+   {
+    "id": "light",
+    "name": "Light"
+   }
+  ],
+  "tokens": [
+   {
+    "name": "bg-000",
+    "value": {
+     "dark": "#0a0e0d",
+     "light": "#f3f6f5"
+    },
+    "usage": "Page ground behind everything; the code canvas and terminal sit on it."
+   },
+   {
+    "name": "bg-100",
+    "value": {
+     "dark": "#0f1514",
+     "light": "#eaefed"
+    },
+    "usage": "App chrome: sidebar, top bar, bottom tab bar."
+   },
+   {
+    "name": "bg-200",
+    "value": {
+     "dark": "#141b19",
+     "light": "#ffffff"
+    },
+    "usage": "Cards and panels (Activité en cours, Agents actifs, PR list)."
+   },
+   {
+    "name": "bg-300",
+    "value": {
+     "dark": "#1b2422",
+     "light": "#f0f4f2"
+    },
+    "usage": "Raised: inputs, chips, row hover, secondary buttons."
+   },
+   {
+    "name": "bg-400",
+    "value": {
+     "dark": "#223230",
+     "light": "#e1ebe7"
+    },
+    "usage": "Selected row, active nav item, pressed state. Keep ink-faint text off it."
+   },
+   {
+    "name": "line",
+    "value": {
+     "dark": "#24302d",
+     "light": "#dbe3e0"
+    },
+    "usage": "Hairlines between rows and around cards. Decorative only — never the only edge of a control."
+   },
+   {
+    "name": "line-strong",
+    "value": {
+     "dark": "#5a756f",
+     "light": "#7a8c86"
+    },
+    "usage": "Control borders (inputs, secondary buttons, tab outline): 3:1 on bg-200 in both themes."
+   },
+   {
+    "name": "ink",
+    "value": {
+     "dark": "#e9f1ee",
+     "light": "#0c1412"
+    },
+    "usage": "Primary text and code, on every bg-* in both themes (11:1+)."
+   },
+   {
+    "name": "ink-muted",
+    "value": {
+     "dark": "#a0aeaa",
+     "light": "#47554f"
+    },
+    "usage": "Secondary text, metadata, timestamps, on every bg-* (5.8:1+)."
+   },
+   {
+    "name": "ink-faint",
+    "value": {
+     "dark": "#83938e",
+     "light": "#5c6b66"
+    },
+    "usage": "Tertiary labels, line numbers, comments, on bg-000…bg-300 only (4.9:1+)."
+   },
+   {
+    "name": "mint",
+    "value": {
+     "dark": "#4ee3b0",
+     "light": "#087a57"
+    },
+    "usage": "Brand and 'alive': primary action, running agent, success, progress fill, focus ring. As text on bg-000…bg-300 and mint-soft."
+   },
+   {
+    "name": "mint-strong",
+    "value": {
+     "dark": "#7af0c6",
+     "light": "#066347"
+    },
+    "usage": "Hover / pressed fill of mint."
+   },
+   {
+    "name": "mint-soft",
+    "value": {
+     "dark": "#0e2c23",
+     "light": "#d9f5ea"
+    },
+    "usage": "Tinted ground behind mint text: live pills, approved card."
+   },
+   {
+    "name": "on-mint",
+    "value": {
+     "dark": "#03140e",
+     "light": "#ffffff"
+    },
+    "usage": "Label and icons on a mint or mint-strong fill (the primary button)."
+   },
+   {
+    "name": "amber",
+    "value": {
+     "dark": "#ffb84d",
+     "light": "#9a5a00"
+    },
+    "usage": "'Needs you': approvals, review requested. As text on bg-000…bg-300 and amber-soft; never for decoration."
+   },
+   {
+    "name": "amber-soft",
+    "value": {
+     "dark": "#2e220c",
+     "light": "#fdefd6"
+    },
+    "usage": "Ground of the approval card and 'À relire' pills."
+   },
+   {
+    "name": "on-amber",
+    "value": {
+     "dark": "#1c1100",
+     "light": "#ffffff"
+    },
+    "usage": "Label on an amber fill (the Approuver button)."
+   },
+   {
+    "name": "sky",
+    "value": {
+     "dark": "#63b0ff",
+     "light": "#1a64c4"
+    },
+    "usage": "'Queued / waiting' (En attente) and links. Text on bg-* and sky-soft."
+   },
+   {
+    "name": "sky-soft",
+    "value": {
+     "dark": "#0f2236",
+     "light": "#e0edfc"
+    },
+    "usage": "Ground behind sky text."
+   },
+   {
+    "name": "coral",
+    "value": {
+     "dark": "#ff7a6b",
+     "light": "#c2352a"
+    },
+    "usage": "Failure: failed check, crash, deleted lines. Always with a word or icon. Text on bg-* and coral-soft."
+   },
+   {
+    "name": "coral-soft",
+    "value": {
+     "dark": "#33140f",
+     "light": "#fde4e1"
+    },
+    "usage": "Ground behind coral text."
+   },
+   {
+    "name": "diff-add",
+    "value": {
+     "dark": "#0f2e22",
+     "light": "#dcf5e9"
+    },
+    "usage": "Added-line ground in diffs; ink reads on it at 12:1+."
+   },
+   {
+    "name": "diff-del",
+    "value": {
+     "dark": "#36151a",
+     "light": "#fde2e2"
+    },
+    "usage": "Deleted-line ground in diffs; ink reads on it at 14:1+."
+   },
+   {
+    "name": "syn-keyword",
+    "value": {
+     "dark": "#ff8fb1",
+     "light": "#b4235a"
+    },
+    "usage": "Code: keywords (public, await, return). On bg-000…bg-300 and the diff grounds."
+   },
+   {
+    "name": "syn-string",
+    "value": {
+     "dark": "#ffd28a",
+     "light": "#8a5300"
+    },
+    "usage": "Code: string literals."
+   },
+   {
+    "name": "syn-type",
+    "value": {
+     "dark": "#6fd8ff",
+     "light": "#0b6e94"
+    },
+    "usage": "Code: types and class names."
+   },
+   {
+    "name": "syn-fn",
+    "value": {
+     "dark": "#c9b0ff",
+     "light": "#6a3fc2"
+    },
+    "usage": "Code: method calls."
+   },
+   {
+    "name": "syn-comment",
+    "value": "{ink-faint}",
+    "usage": "Code: comments — an alias of ink-faint."
+   },
+   {
+    "name": "syn-number",
+    "value": "{amber}",
+    "usage": "Code: numbers and constants — an alias of amber."
+   }
+  ]
+ },
+ "type": {
+  "fonts": [],
+  "families": {
+   "sans": "\"Geist\", ui-sans-serif, system-ui, sans-serif",
+   "mono": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", Menlo, monospace"
+  },
+  "groups": [
+   {
+    "name": "Interface",
+    "family": "sans",
+    "note": "Geist, hosted on Google Fonts. Tight, technical, calm enough for eight hours.",
+    "styles": [
+     {
+      "name": "display",
+      "fontSize": "32px",
+      "lineHeight": "38px",
+      "fontWeight": 700,
+      "letterSpacing": "-0.02em",
+      "sample": "Bonjour Aurélien",
+      "usage": "Greeting and page titles; one per screen."
+     },
+     {
+      "name": "title",
+      "fontSize": "22px",
+      "lineHeight": "28px",
+      "fontWeight": 600,
+      "letterSpacing": "-0.01em",
+      "sample": "Ajouter la synchronisation cloud",
+      "usage": "The current task's title, PR titles in detail views."
+     },
+     {
+      "name": "heading",
+      "fontSize": "15px",
+      "lineHeight": "22px",
+      "fontWeight": 600,
+      "sample": "Approbations en attente",
+      "usage": "Card and section headings."
+     },
+     {
+      "name": "body",
+      "fontSize": "14px",
+      "lineHeight": "20px",
+      "fontWeight": 400,
+      "sample": "Implémentation de la synchronisation automatique des sauvegardes.",
+      "usage": "Everything else."
+     },
+     {
+      "name": "body-sm",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": 400,
+      "sample": "Démarrée il y a 1 h 24",
+      "usage": "Row secondary lines, metadata."
+     },
+     {
+      "name": "label",
+      "fontSize": "12px",
+      "lineHeight": "16px",
+      "fontWeight": 500,
+      "letterSpacing": "0.01em",
+      "sample": "Session active",
+      "usage": "Pills, chips, buttons in compact rows."
+     },
+     {
+      "name": "overline",
+      "fontSize": "11px",
+      "lineHeight": "14px",
+      "fontWeight": 600,
+      "letterSpacing": "0.08em",
+      "sample": "ACTIVITÉ EN COURS",
+      "usage": "Section kickers, set in capitals."
+     }
+    ]
+   },
+   {
+    "name": "Code",
+    "family": "mono",
+    "note": "JetBrains Mono for code, diffs, terminal, ticket keys and counters (tabular).",
+    "styles": [
+     {
+      "name": "code",
+      "fontSize": "13px",
+      "lineHeight": "20px",
+      "fontWeight": 400,
+      "sample": "var resolved = await _conflictResolver.ResolveAsync(local);",
+      "usage": "Code views, diffs, terminal."
+     },
+     {
+      "name": "code-sm",
+      "fontSize": "12px",
+      "lineHeight": "16px",
+      "fontWeight": 500,
+      "sample": "PROJ-123 · +124 −12",
+      "usage": "Ticket keys, line counts, durations."
+     }
+    ]
+   }
+  ]
+ },
+ "spacing": {
+  "note": "4px base.",
+  "tokens": [
+   {
+    "name": "space-1",
+    "value": "4px",
+    "usage": "Dot-to-label, icon-to-label in pills."
+   },
+   {
+    "name": "space-2",
+    "value": "8px",
+    "usage": "Inside chips; gap between chips."
+   },
+   {
+    "name": "space-3",
+    "value": "12px",
+    "usage": "Inside buttons and rows; between rows of a list."
+   },
+   {
+    "name": "space-4",
+    "value": "16px",
+    "usage": "Card padding (compact)."
+   },
+   {
+    "name": "space-5",
+    "value": "20px",
+    "usage": "Card padding (default)."
+   },
+   {
+    "name": "space-6",
+    "value": "24px",
+    "usage": "Gap between cards; page gutter on mobile."
+   },
+   {
+    "name": "space-8",
+    "value": "32px",
+    "usage": "Page gutter on desktop; between page sections."
+   }
+  ]
+ },
+ "radius": {
+  "note": "Soft rectangles; pills only for status.",
+  "tokens": [
+   {
+    "name": "radius-xs",
+    "value": "6px",
+    "usage": "Repo chips, code badges, diff file rows."
+   },
+   {
+    "name": "radius-sm",
+    "value": "8px",
+    "usage": "Buttons, inputs, nav items, tab pills."
+   },
+   {
+    "name": "radius-md",
+    "value": "12px",
+    "usage": "Cards and list containers."
+   },
+   {
+    "name": "radius-lg",
+    "value": "16px",
+    "usage": "Large panels, the hero task card, sheets on mobile."
+   },
+   {
+    "name": "radius-full",
+    "value": "999px",
+    "usage": "Status pills, dots, avatars, progress tracks."
+   }
+  ]
+ },
+ "shadow": {
+  "note": "Dark theme leans on glow, not drop shadow: light comes from the thing that is alive.",
+  "tokens": [
+   {
+    "name": "shadow-sm",
+    "value": {
+     "dark": "0 1px 2px #00000066",
+     "light": "0 1px 2px #0c14120f, 0 1px 3px #0c141214"
+    },
+    "usage": "Cards at rest (light theme mostly)."
+   },
+   {
+    "name": "shadow-lg",
+    "value": {
+     "dark": "0 16px 40px -8px #000000cc",
+     "light": "0 12px 32px -6px #0c141229"
+    },
+    "usage": "Menus, popovers, sheets."
+   },
+   {
+    "name": "glow-mint",
+    "value": {
+     "dark": "0 0 0 1px #4ee3b040, 0 0 24px -2px #4ee3b059",
+     "light": "0 0 0 1px #087a5733, 0 6px 18px -6px #087a5759"
+    },
+    "usage": "Primary button hover; the card of a running session."
+   },
+   {
+    "name": "glow-amber",
+    "value": {
+     "dark": "0 0 0 1px #ffb84d59, 0 0 28px -2px #ffb84d4d",
+     "light": "0 0 0 1px #9a5a0040, 0 6px 20px -6px #9a5a0059"
+    },
+    "usage": "Peak of the approval card's attention breathe."
+   },
+   {
+    "name": "focus-ring",
+    "value": {
+     "dark": "0 0 0 2px #0a0e0d, 0 0 0 4px #4ee3b0",
+     "light": "0 0 0 2px #ffffff, 0 0 0 4px #087a57"
+    },
+    "usage": "Keyboard focus: 2px ground gap then 2px solid mint (4.9:1+ on every bg). Never animated."
+   }
+  ]
+ },
+ "duration": {
+  "note": "Seven speeds. UI feedback under 250ms; loops only for living things.",
+  "tokens": [
+   {
+    "name": "dur-instant",
+    "value": "80ms",
+    "usage": "Hover colour, row highlight, icon tint."
+   },
+   {
+    "name": "dur-quick",
+    "value": "140ms",
+    "usage": "Press, toggle, exits, tooltips."
+   },
+   {
+    "name": "dur-base",
+    "value": "220ms",
+    "usage": "Tab indicator, nav rail, pill state change, list item enter."
+   },
+   {
+    "name": "dur-slow",
+    "value": "360ms",
+    "usage": "Panels, sheets, progress fill steps, card state morph."
+   },
+   {
+    "name": "dur-deliberate",
+    "value": "560ms",
+    "usage": "Celebrations only: approved, all tests green, check draw."
+   },
+   {
+    "name": "dur-shimmer",
+    "value": "1600ms",
+    "usage": "Progress flow, skeleton, the one-shot nudge sweep."
+   },
+   {
+    "name": "dur-ambient",
+    "value": "2400ms",
+    "usage": "Breathing loops: live dot ring, attention breathe, avatar orbit."
+   },
+   {
+    "name": "stagger-step",
+    "value": "45ms",
+    "usage": "Delay between siblings entering (rows, checklist items). Cap at 8 steps."
+   }
+  ]
+ },
+ "easing": {
+  "note": "Four curves and a line.",
+  "tokens": [
+   {
+    "name": "ease-standard",
+    "value": "cubic-bezier(0.2, 0, 0, 1)",
+    "usage": "Anything that moves from one resting state to another (tab indicator, width)."
+   },
+   {
+    "name": "ease-enter",
+    "value": "cubic-bezier(0.05, 0.7, 0.1, 1)",
+    "usage": "Elements arriving: fast start, long settle."
+   },
+   {
+    "name": "ease-exit",
+    "value": "cubic-bezier(0.3, 0, 0.8, 0.15)",
+    "usage": "Elements leaving: slow start, gone fast."
+   },
+   {
+    "name": "ease-spring",
+    "value": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    "usage": "Your own actions only: press release, approve, check pop. Overshoots ~10%."
+   },
+   {
+    "name": "ease-breathe",
+    "value": "cubic-bezier(0.45, 0, 0.55, 1)",
+    "usage": "Ambient loops (sine-like in and out)."
+   },
+   {
+    "name": "ease-linear",
+    "value": "linear",
+    "usage": "Rotations and flowing stripes."
+   }
+  ]
+ },
+ "travel": {
+  "note": "How far things move. Short distances keep motion legible at speed.",
+  "tokens": [
+   {
+    "name": "shift-1",
+    "value": "2px",
+    "usage": "Hover nudge (chevrons, arrows)."
+   },
+   {
+    "name": "shift-2",
+    "value": "4px",
+    "usage": "Pills and chips entering."
+   },
+   {
+    "name": "shift-3",
+    "value": "8px",
+    "usage": "Rows, cards, messages entering."
+   },
+   {
+    "name": "shift-4",
+    "value": "16px",
+    "usage": "Panels and sheets entering."
+   }
+  ]
+ }
+}

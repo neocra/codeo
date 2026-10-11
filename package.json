@@ -1,0 +1,40 @@
+{
+  "name": "codeo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Codeo \u2014 AI-native development workspace that orchestrates coding agents.",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "turbo run dev --filter=@codeo/desktop...",
+    "dev:desktop": "pnpm --filter @codeo/desktop dev",
+    "dev:runtime": "pnpm --filter @codeo/runtime dev",
+    "dev:gateway": "pnpm --filter @codeo/gateway dev",
+    "dev:mobile": "pnpm --filter @codeo/mobile start",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "eslint": "^9.39.0",
+    "@eslint/js": "^9.39.0",
+    "typescript-eslint": "^8.46.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
+    "prettier": "^3.6.0",
+    "turbo": "^2.11.0",
+    "typescript": "~5.9.3",
+    "vitest": "^4.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "react": "19.1.0",
+      "react-dom": "19.1.0"
+    }
+  }
+}

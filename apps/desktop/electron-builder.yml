@@ -1,0 +1,40 @@
+appId: com.codeo.desktop
+productName: Codeo
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: ../runtime/dist
+    to: runtime
+    filter: ['**/*']
+  - from: ../../node_modules/@anthropic-ai
+    to: runtime/node_modules/@anthropic-ai
+  - from: ../../node_modules/@openai
+    to: runtime/node_modules/@openai
+  - from: ../../node_modules/@libsql
+    to: runtime/node_modules/@libsql
+  - from: ../../node_modules/libsql
+    to: runtime/node_modules/libsql
+  - from: ../../node_modules/drizzle-orm
+    to: runtime/node_modules/drizzle-orm
+  - from: ../../node_modules/ws
+    to: runtime/node_modules/ws
+  - from: ../../node_modules/zod
+    to: runtime/node_modules/zod
+asarUnpack:
+  - '**/*.node'
+mac:
+  category: public.app-category.developer-tools
+  target: [dmg, zip]
+  hardenedRuntime: true
+  entitlementsInherit: resources/entitlements.mac.plist
+  artifactName: ${productName}-${version}-${arch}.${ext}
+win:
+  target: [nsis]
+linux:
+  target: [AppImage, deb]
+  category: Development
+npmRebuild: false

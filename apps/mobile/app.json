@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Codeo Remote",
+    "slug": "codeo-remote",
+    "version": "0.1.0",
+    "scheme": "codeo",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0e0d",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "com.codeo.remote",
+      "supportsTablet": false,
+      "infoPlist": { "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true } }
+    },
+    "android": {
+      "package": "com.codeo.remote",
+      "softwareKeyboardLayoutMode": "resize",
+      "usesCleartextTraffic": true
+    },
+    "plugins": ["expo-router", "expo-font", "expo-secure-store"],
+    "experiments": { "typedRoutes": false }
+  }
+}
