@@ -149,6 +149,8 @@ export const SubtaskSchema = z.object({
   order: z.number().int(),
   /** Provider or launch error when the subtask failed; kept so the task's final failure reports it. */
   error: z.string().nullable().default(null),
+  /** Start of the current attempt: crash recovery only adopts sessions created after it (a retry detaches older ones). */
+  attemptStartedAt: IsoDateSchema.nullable().default(null),
 });
 export type Subtask = z.infer<typeof SubtaskSchema>;
 

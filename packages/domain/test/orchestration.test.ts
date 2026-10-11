@@ -15,6 +15,7 @@ const sub = (id: string, order: number, status: SubtaskStatus = 'pending', depen
   sessionId: null,
   worktreeId: null,
   error: null,
+  attemptStartedAt: null,
   order,
 });
 const plan = (orchestration: OrchestrationMode, subtasks: Subtask[]) => ({ orchestration, subtasks });

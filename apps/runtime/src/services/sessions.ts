@@ -1,7 +1,7 @@
 import { roleInstructions, type ProviderEvent, type ProviderSessionHandle } from '@codeo/agent-provider-core';
 import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { SessionRepo } from '@codeo/database';
-import { sessionTransition, type AgentSession, type SessionEntry, type SessionStatus, type Workspace } from '@codeo/domain';
+import { canTransitionSession, sessionTransition, type AgentSession, type SessionEntry, type SessionStatus, type Workspace } from '@codeo/domain';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { KeyedLock, newId, type Logger } from '@codeo/shared-utils';
@@ -180,8 +180,10 @@ export class SessionService {
   private async launch(session: AgentSession, prompt: string): Promise<AgentSession> {
     if (!existsSync(session.cwd)) {
       const message = `Le dossier de travail de cette session n’existe plus (${session.cwd}) : le worktree a été supprimé.`;
-      /* Leave a terminal state behind, as the provider-unavailable path does, so recovery never resumes it. */
-      await this.setStatus(session, session.status === 'created' ? 'failed' : 'completed', message);
+      /* Leave a terminal state behind, as the provider-unavailable path does, so recovery never resumes it;
+         pick one the state machine allows from here (idle → completed, created/disconnected → failed). */
+      const terminal = canTransitionSession(session.status, 'completed') ? 'completed' : canTransitionSession(session.status, 'failed') ? 'failed' : null;
+      if (terminal) await this.setStatus(session, terminal, message);
       throw new RuntimeError('CONFLICT', message);
     }
     if (this.closed) throw new RuntimeError('CONFLICT', 'Le runtime s’arrête : aucune session ne peut démarrer.');

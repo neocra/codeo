@@ -92,7 +92,8 @@ export class TaskService {
     let changed = false;
     for (const sub of task.subtasks) {
       if (sub.sessionId) continue;
-      const orphan = sessions.find((s) => s.subtaskId === sub.id);
+      /* Only a session of the current attempt counts: a retry detached the older ones on purpose. */
+      const orphan = sessions.find((s) => s.subtaskId === sub.id && (!sub.attemptStartedAt || s.createdAt >= sub.attemptStartedAt));
       if (!orphan) continue;
       this.log.warn('reattaching orphaned session to its subtask', { taskId: task.id, subtaskId: sub.id, sessionId: orphan.id });
       /* The session's persisted outcome wins: finished work is not rerun, a disconnected agent is resumable work. */
@@ -187,6 +188,7 @@ export class TaskService {
         sessionId: null,
         worktreeId: null,
         error: null,
+        attemptStartedAt: null,
         order: i,
       };
     });
@@ -234,7 +236,8 @@ export class TaskService {
           }
         }
       }
-      const subtasks = task.subtasks.map((s) => (s.status === 'failed' || s.status === 'cancelled' ? { ...s, status: 'pending' as const, sessionId: null, error: null } : s));
+      const attemptStartedAt = new Date().toISOString();
+      const subtasks = task.subtasks.map((s) => (s.status === 'failed' || s.status === 'cancelled' ? { ...s, status: 'pending' as const, sessionId: null, error: null, attemptStartedAt } : s));
       task = await this.save(task, 'queued', { subtasks, startedAt: task.startedAt ?? new Date().toISOString() });
       const { task: advanced, sessions, errors } = await this.advance(task);
       if (!sessions.length && errors.length) throw new RuntimeError('PROVIDER_UNAVAILABLE', errors[0]!);
