@@ -97,8 +97,9 @@ export class WorktreeService {
     if (existing) {
       /* Directory deleted outside Codeo: forget it and clear git's stale registration; the branch is reattached below. */
       this.log.warn('worktree directory missing, recreating', { id: existing.id, path: existing.path });
-      await this.repo.delete(existing.id);
+      /* Prune first: if it fails the row survives and the next attempt retries from here. */
       await pruneWorktrees(repository.path);
+      await this.repo.delete(existing.id);
     }
     const baseBranch = await this.baseRef(repository);
     const branch = worktreeBranch(task, lane);
@@ -160,7 +161,7 @@ export class WorktreeService {
       await opts.beforeRemove?.();
       /* Directory gone (deleted outside Codeo): clear git's stale registration so the branch can be reattached later. */
       const repository = (await this.workspaces.get(worktree.workspaceId).catch(() => null))?.repositories.find((r) => r.id === worktree.repositoryId);
-      if (repository) await pruneWorktrees(repository.path).catch((e) => this.log.warn('prune failed', { err: String(e) }));
+      if (repository) await pruneWorktrees(repository.path);
     }
     await this.repo.delete(id);
     this.bus.publish('WorktreeRemoved', { worktreeId: id, taskId: worktree.taskId });

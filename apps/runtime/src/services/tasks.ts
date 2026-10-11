@@ -78,10 +78,28 @@ export class TaskService {
     /* Locked: the sessions marked disconnected at boot are reporting on these same tasks. */
     for (const { id } of await this.repo.list()) {
       await this.locked(id, async () => {
-        const t = await this.get(id);
+        let t = await this.get(id);
+        t = await this.reconcileAssignments(t);
         if (t.status === 'running' || t.status === 'waiting_approval' || t.status === 'queued') await this.save(t, 'paused');
       });
     }
+  }
+
+  /** A session started for a subtask but never recorded on it (crash between launch and save) is reattached, never duplicated. */
+  private async reconcileAssignments(task: Task): Promise<Task> {
+    if (task.subtasks.every((s) => s.sessionId)) return task;
+    const sessions = await this.sessions.list({ taskId: task.id });
+    let changed = false;
+    for (const sub of task.subtasks) {
+      if (sub.sessionId) continue;
+      const orphan = sessions.find((s) => s.subtaskId === sub.id);
+      if (!orphan) continue;
+      this.log.warn('reattaching orphaned session to its subtask', { taskId: task.id, subtaskId: sub.id, sessionId: orphan.id });
+      task = patchSubtask(task, sub.id, { status: sub.status === 'pending' ? 'running' : sub.status, sessionId: orphan.id, worktreeId: orphan.worktreeId ?? sub.worktreeId });
+      changed = true;
+    }
+    if (changed) await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
+    return task;
   }
 
   list(workspaceId?: string): Promise<Task[]> {
@@ -273,6 +291,8 @@ export class TaskService {
         try {
           const { session, worktree } = await this.launch(task, sub);
           task = patchSubtask(task, sub.id, { status: 'running', sessionId: session.id, worktreeId: worktree?.id ?? sub.worktreeId });
+          /* Durable before the next launch: a crash here must not let recovery start a second agent for this step. */
+          await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
           sessions.push(session);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

@@ -338,14 +338,26 @@ export class SessionService {
     return session;
   }
 
+  /** Runs `fn` under the session's worktree lock (none when the session is not in a worktree). */
+  private inWorktree<T>(session: AgentSession, fn: () => Promise<T>): Promise<T> {
+    return session.worktreeId ? this.worktreeLocks.run(session.worktreeId, fn) : fn();
+  }
+
   async cancel(sessionId: string): Promise<AgentSession> {
+    const session = await this.get(sessionId);
+    return this.inWorktree(session, () => this.cancelUnlocked(sessionId));
+  }
+
+  /** Cancel without taking the worktree lock — for callers that already hold it. */
+  async cancelUnlocked(sessionId: string): Promise<AgentSession> {
     const session = await this.get(sessionId);
     const live = this.live.get(sessionId);
     this.approvals.cancelForSession(sessionId);
     if (live) {
-      this.live.delete(sessionId);
       await live.handle.interrupt().catch(() => undefined);
+      /* The live entry goes only once the provider is really gone, so a failed close stays visible and retryable. */
       await live.handle.close();
+      this.live.delete(sessionId);
       await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', text: 'Session arrêtée par l’utilisateur.' }));
     }
     return this.setStatus(await this.get(sessionId), 'cancelled');
@@ -354,13 +366,19 @@ export class SessionService {
   /** Closes an idle session's provider process (e.g. its worktree is being removed). Running sessions are refused. */
   async release(sessionId: string, reason: string): Promise<AgentSession> {
     const session = await this.get(sessionId);
+    return this.inWorktree(session, () => this.releaseUnlocked(sessionId, reason));
+  }
+
+  /** Release without taking the worktree lock — for callers that already hold it (worktree removal). */
+  async releaseUnlocked(sessionId: string, reason: string): Promise<AgentSession> {
+    const session = await this.get(sessionId);
     const live = this.live.get(sessionId);
     if (!live) return session;
     if (session.status === 'running' || session.status === 'waiting_approval') {
       throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
     }
-    this.live.delete(sessionId);
     await live.handle.close();
+    this.live.delete(sessionId);
     await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', text: reason }));
     return this.setStatus(await this.get(sessionId), 'completed');
   }

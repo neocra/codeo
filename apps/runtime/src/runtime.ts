@@ -143,7 +143,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
         const removed = await worktrees.remove(p.worktreeId, {
           force: p.force,
           beforeRemove: async () => {
-            for (const s of owners) await sessions.release(s.id, 'Session fermée : le worktree a été supprimé.');
+            for (const s of owners) await sessions.releaseUnlocked(s.id, 'Session fermée : le worktree a été supprimé.');
           },
         });
         return { removed };
