@@ -3,7 +3,7 @@ import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { SessionRepo } from '@codeo/database';
 import { sessionTransition, type AgentSession, type SessionEntry, type SessionStatus, type Workspace } from '@codeo/domain';
 import { existsSync } from 'node:fs';
-import { newId, type Logger } from '@codeo/shared-utils';
+import { KeyedLock, newId, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { ApprovalService } from './approvals';
 import type { ProviderRegistry } from './providers';
@@ -29,6 +29,8 @@ export interface SessionPlacement {
   subtaskId: string | null;
 }
 
+export type SendInterceptor = (session: AgentSession, next: () => Promise<AgentSession>) => Promise<AgentSession>;
+
 export interface SessionListener {
   onStatus(session: AgentSession, previous: SessionStatus): void;
 }
@@ -41,7 +43,7 @@ export interface SessionListener {
 export class SessionService {
   private live = new Map<string, Live>();
   private listeners: SessionListener[] = [];
-  private sendGuards: ((session: AgentSession) => Promise<void>)[] = [];
+  private sendInterceptors: SendInterceptor[] = [];
 
   constructor(
     private readonly repo: SessionRepo,
@@ -50,11 +52,16 @@ export class SessionService {
     private readonly approvals: ApprovalService,
     private readonly bus: EventBus,
     private readonly log: Logger,
+    /** Serialises everything that starts or stops work inside a worktree (shared with worktree removal). */
+    readonly worktreeLocks: KeyedLock = new KeyedLock(),
   ) {}
 
-  /** Registers a check run before any user turn is accepted (the task scheduler refuses sends into busy lanes). */
-  addSendGuard(guard: (session: AgentSession) => Promise<void>): void {
-    this.sendGuards.push(guard);
+  /**
+   * Wraps every user turn: the task scheduler runs its checks and the send itself under the task's
+   * mutation lock, so a send can never interleave with a step being launched or the task being closed.
+   */
+  addSendInterceptor(interceptor: SendInterceptor): void {
+    this.sendInterceptors.push(interceptor);
   }
 
   addListener(l: SessionListener): void {
@@ -160,7 +167,7 @@ export class SessionService {
     };
     await this.repo.upsert(session);
     this.bus.publish('SessionCreated', { session });
-    return this.launch(session, input.prompt);
+    return placement?.worktreeId ? this.worktreeLocks.run(placement.worktreeId, () => this.launch(session, input.prompt)) : this.launch(session, input.prompt);
   }
 
   /** Starts (or resumes) the provider process behind a session and sends the prompt. */
@@ -305,9 +312,16 @@ export class SessionService {
     }
   }
 
-  async send(sessionId: string, text: string): Promise<AgentSession> {
+  /** `fromScheduler`: the task scheduler already holds the task lock, so interceptors are skipped (they would deadlock). */
+  async send(sessionId: string, text: string, opts: { fromScheduler?: boolean } = {}): Promise<AgentSession> {
+    const session = await this.get(sessionId);
+    const inner = () => (session.worktreeId ? this.worktreeLocks.run(session.worktreeId, () => this.sendUnlocked(sessionId, text)) : this.sendUnlocked(sessionId, text));
+    if (opts.fromScheduler) return inner();
+    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>((next, interceptor) => () => interceptor(session, next), inner)();
+  }
+
+  private async sendUnlocked(sessionId: string, text: string): Promise<AgentSession> {
     let session = await this.get(sessionId);
-    for (const guard of this.sendGuards) await guard(session);
     const live = this.live.get(sessionId);
     if (!live) {
       /* Reopened session: resume the provider conversation with the stored provider session id. */

@@ -75,7 +75,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const providers = new ProviderRegistry(opts.providers ?? [new ClaudeCodeProvider(), new CodexProvider()], bus, log.child('providers'));
   const workspaces = new WorkspaceService(new WorkspaceRepo(db.db), bus, machineId);
   const approvals = new ApprovalService(new ApprovalRepo(db.db), bus, log.child('approvals'));
-  const sessions = new SessionService(new SessionRepo(db.db), workspaces, providers, approvals, bus, log.child('sessions'));
+  const worktreeLocks = new KeyedLock();
+  const sessions = new SessionService(new SessionRepo(db.db), workspaces, providers, approvals, bus, log.child('sessions'), worktreeLocks);
   const worktreesDir = opts.worktreesDir ?? (opts.dataDir === ':memory:' ? path.join(os.tmpdir(), 'codeo-worktrees') : path.join(opts.dataDir, 'worktrees'));
   const workspaceLocks = new KeyedLock();
   const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir, workspaceLocks);
@@ -130,21 +131,23 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'tasks.pause': async (p) => tasks.pause(p.taskId),
     'tasks.resume': async (p) => tasks.resume(p.taskId),
     'worktrees.list': async (p) => worktrees.list(p),
-    'worktrees.remove': async (p) => {
-      const wt = await worktrees.get(p.worktreeId);
-      /* A working agent keeps its worktree; idle sessions are closed with it (they cannot resume without the directory). */
-      const owners = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => s.worktreeId === wt.id && sessions.isLive(s.id));
-      if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
-        throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
-      }
-      const removed = await worktrees.remove(p.worktreeId, {
-        force: p.force,
-        beforeRemove: async () => {
-          for (const s of owners) await sessions.release(s.id, 'Session fermée : le worktree a été supprimé.');
-        },
-      });
-      return { removed };
-    },
+    'worktrees.remove': async (p) =>
+      /* Same lock as session launch/send into this worktree: owners cannot change under our feet. */
+      worktreeLocks.run(p.worktreeId, async () => {
+        const wt = await worktrees.get(p.worktreeId);
+        /* A working agent keeps its worktree; idle sessions are closed with it (they cannot resume without the directory). */
+        const owners = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => s.worktreeId === wt.id && sessions.isLive(s.id));
+        if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
+          throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
+        }
+        const removed = await worktrees.remove(p.worktreeId, {
+          force: p.force,
+          beforeRemove: async () => {
+            for (const s of owners) await sessions.release(s.id, 'Session fermée : le worktree a été supprimé.');
+          },
+        });
+        return { removed };
+      }),
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),
     'sessions.start': async (p) => sessions.start(p),

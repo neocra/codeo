@@ -62,7 +62,10 @@ export class TaskService {
     private readonly bus: EventBus,
     private readonly log: Logger,
   ) {
-    sessions.addSendGuard((s) => this.assertSendAllowed(s));
+    sessions.addSendInterceptor((s, next) => (s.taskId ? this.locked(s.taskId, async () => {
+      await this.assertSendAllowed(s);
+      return next();
+    }) : next()));
     sessions.addListener({
       onStatus: (s) => {
         if (!s.taskId) return;
@@ -237,7 +240,7 @@ export class TaskService {
         if (sub.status !== 'running' && sub.status !== 'waiting_approval') continue;
         try {
           if (!sub.sessionId) throw new Error('no session');
-          await this.sessions.send(sub.sessionId, RESUME_PROMPT);
+          await this.sessions.send(sub.sessionId, RESUME_PROMPT, { fromScheduler: true });
           task = patchSubtask(task, sub.id, { status: 'running' });
         } catch (err) {
           /* The provider conversation cannot be resumed: start the subtask over, in the same worktree. */
@@ -355,9 +358,10 @@ export class TaskService {
   }
 
   /**
-   * A user may talk to a task's agent while the task is in review, failed or paused. Not when the task is
-   * closed (it would silently come back to life), and not when another step of the same worktree is
-   * working (two agents would edit the same files).
+   * Runs under the task lock (see the interceptor). A user may talk to a task's agent while the task is
+   * running or in review. Paused and failed tasks recover through tasks.resume / tasks.start so every
+   * step is rescheduled; closed tasks never come back to life; and no agent is prompted while another
+   * step works in the same worktree.
    */
   private async assertSendAllowed(session: AgentSession): Promise<void> {
     if (!session.taskId) return;
@@ -368,6 +372,9 @@ export class TaskService {
     if (task.status === 'completed' || task.status === 'cancelled') {
       throw new RuntimeError('CONFLICT', 'Cette tâche est terminée : créez une nouvelle tâche pour continuer.');
     }
+    if (task.status === 'paused') throw new RuntimeError('CONFLICT', 'La tâche est en pause : reprenez-la pour continuer.');
+    if (task.status === 'failed') throw new RuntimeError('CONFLICT', 'La tâche est en échec : redémarrez-la pour relancer ses étapes.');
+    if (task.status === 'draft') throw new RuntimeError('CONFLICT', 'La tâche n’est pas démarrée.');
     const occupied = task.subtasks.find(
       (o) => o.id !== sub.id && (o.status === 'running' || o.status === 'waiting_approval') && (sharesWorktree(task.orchestration) || (o.worktreeId !== null && o.worktreeId === sub.worktreeId)),
     );

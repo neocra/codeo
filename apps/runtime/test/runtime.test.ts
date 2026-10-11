@@ -272,6 +272,8 @@ describe('orchestration and worktrees', () => {
     await waitTask(task.id, 'failed');
     const failed = await client.request('tasks.get', { taskId: task.id });
     expect(failed.subtasks.map((s) => s.status)).toEqual(['completed', 'failed', 'cancelled']);
+    /* Recovery goes through tasks.start, never through a raw send to one of its sessions. */
+    await expect(client.request('sessions.send', { sessionId: failed.subtasks[0]!.sessionId!, text: 'encore' })).rejects.toThrow(/en échec/);
     /* Retry: the completed step is kept, the others run again — still broken, so it fails again, without a new worktree. */
     await expect(client.request('tasks.start', { taskId: task.id })).rejects.toThrow(/crashed/);
     expect((await client.request('tasks.get', { taskId: task.id })).status).toBe('failed');
@@ -286,6 +288,7 @@ describe('orchestration and worktrees', () => {
     expect(paused.status).toBe('paused');
     await waitFor(async () => (await client.request('sessions.get', { sessionId: session!.id })).session.status === 'cancelled');
     expect((await client.request('tasks.get', { taskId: task.id })).status).toBe('paused');
+    await expect(client.request('sessions.send', { sessionId: session!.id, text: 'encore' })).rejects.toThrow(/en pause/);
     fake.gate.open();
     const resumed = await client.request('tasks.resume', { taskId: task.id });
     expect(resumed.status).toBe('running');
