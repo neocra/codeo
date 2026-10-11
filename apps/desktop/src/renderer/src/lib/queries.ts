@@ -12,6 +12,7 @@ export const keys = {
   sessions: (workspaceId?: string | null) => ['sessions', workspaceId ?? 'all'] as const,
   session: (id: string) => ['session', id] as const,
   approvals: ['approvals', 'pending'] as const,
+  worktrees: (taskId: string) => ['worktrees', taskId] as const,
   home: (workspaceId?: string | null) => ['home', workspaceId ?? 'default'] as const,
 };
 
@@ -23,6 +24,8 @@ export const useSessions = (workspaceId: string | null) =>
   useQuery({ queryKey: keys.sessions(workspaceId), queryFn: () => invoke('sessions.list', workspaceId ? { workspaceId } : {}) });
 export const useSession = (id: string | null) =>
   useQuery({ queryKey: keys.session(id ?? ''), queryFn: () => invoke('sessions.get', { sessionId: id! }), enabled: Boolean(id) });
+export const useWorktrees = (taskId: string | null) =>
+  useQuery({ queryKey: keys.worktrees(taskId ?? ''), queryFn: () => invoke('worktrees.list', { taskId: taskId! }), enabled: Boolean(taskId) });
 export const usePendingApprovals = () => useQuery({ queryKey: keys.approvals, queryFn: () => invoke('approvals.list', { status: 'pending' }) });
 export const useHome = (workspaceId: string | null) =>
   useQuery({ queryKey: keys.home(workspaceId), queryFn: () => invoke('home.summary', workspaceId ? { workspaceId } : {}) });
@@ -59,6 +62,12 @@ export function applyEvent(qc: QueryClient, event: RuntimeEvent): void {
     case 'TaskProgressChanged':
       void qc.invalidateQueries({ queryKey: ['tasks'] });
       void qc.invalidateQueries({ queryKey: ['home'] });
+      /* Agents finishing a step change the worktrees' dirty state. */
+      if (event.type === 'TaskUpdated') void qc.invalidateQueries({ queryKey: ['worktrees', event.task.id] });
+      return;
+    case 'WorktreeCreated':
+    case 'WorktreeRemoved':
+      void qc.invalidateQueries({ queryKey: ['worktrees'] });
       return;
     case 'SessionCreated':
     case 'SessionUpdated':

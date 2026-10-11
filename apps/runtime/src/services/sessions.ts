@@ -21,6 +21,13 @@ interface Live {
   chain: Promise<void>;
 }
 
+/** Where a session runs when the task scheduler places it (worktree). Plain sessions run in the repository root. */
+export interface SessionPlacement {
+  cwd: string;
+  worktreeId: string | null;
+  subtaskId: string | null;
+}
+
 export interface SessionListener {
   onStatus(session: AgentSession, previous: SessionStatus): void;
 }
@@ -121,17 +128,17 @@ export class SessionService {
     return first.path;
   }
 
-  async start(input: CommandParsedParams<'sessions.start'>): Promise<AgentSession> {
+  async start(input: CommandParsedParams<'sessions.start'>, placement?: SessionPlacement): Promise<AgentSession> {
     const ws = await this.workspaces.get(input.workspaceId);
-    const cwd = this.resolveCwd(ws, input.repositoryId);
+    const cwd = placement?.cwd ?? this.resolveCwd(ws, input.repositoryId);
     const now = new Date().toISOString();
     const session: AgentSession = {
       id: newId('ses'),
       workspaceId: ws.id,
       taskId: input.taskId,
-      subtaskId: null,
+      subtaskId: placement?.subtaskId ?? null,
       repositoryId: input.repositoryId ?? ws.repositories[0]?.id ?? null,
-      worktreeId: null,
+      worktreeId: placement?.worktreeId ?? null,
       provider: input.provider,
       role: input.role,
       title: input.title?.trim() || input.prompt.split('\n')[0]!.slice(0, 80),

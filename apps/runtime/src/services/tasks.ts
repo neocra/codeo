@@ -1,29 +1,81 @@
 import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { TaskRepo } from '@codeo/database';
-import { taskTransition, type AgentSession, type SessionStatus, type Task, type TaskStatus } from '@codeo/domain';
+import {
+  aggregateTaskStatus,
+  blockedSubtasks,
+  orderedSubtasks,
+  runnableSubtasks,
+  subtaskDependencies,
+  taskProgress,
+  taskTransitionPath,
+  type AgentSession,
+  type Subtask,
+  type SubtaskStatus,
+  type Task,
+  type TaskStatus,
+  type Worktree,
+} from '@codeo/domain';
 import { newId, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { SessionService } from './sessions';
 import type { WorkspaceService } from './workspaces';
+import type { WorktreeService } from './worktrees';
+
+const RESUME_PROMPT = 'Reprends la tâche là où tu t’étais arrêté et termine-la.';
+/** Output of a previous pipeline step handed to the next one. */
+const HANDOFF_MAX_CHARS = 4000;
+/** Statuses in which the scheduler may launch new subtasks. */
+const SCHEDULABLE: readonly TaskStatus[] = ['queued', 'running', 'waiting_approval'];
+/** Session events no longer change these tasks: pause/cancel already settled their subtasks. */
+const FROZEN: readonly TaskStatus[] = ['paused', 'cancelled', 'completed', 'draft'];
+
+const SUBTASK_STATUS_FROM_SESSION: Partial<Record<AgentSession['status'], SubtaskStatus>> = {
+  running: 'running',
+  waiting_approval: 'waiting_approval',
+  idle: 'completed',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+};
+
+const patchSubtask = (task: Task, id: string, patch: Partial<Subtask>): Task => ({
+  ...task,
+  subtasks: task.subtasks.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+});
 
 /**
- * Phase 3 scope: one task = one subtask = one session. The orchestration engine (phase 4)
- * will schedule several subtasks over this same service.
+ * The orchestration engine. A task is a plan of subtasks (one agent each); the engine
+ * launches every subtask whose dependencies are complete, places it in its worktree,
+ * folds session status changes back into the plan and derives the task status from it
+ * (rules in `@codeo/domain` orchestration). Every mutation of a task is serialized, so
+ * events from agents running in parallel never overwrite each other.
  */
 export class TaskService {
+  private locks = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly repo: TaskRepo,
     private readonly workspaces: WorkspaceService,
     private readonly sessions: SessionService,
+    private readonly worktrees: WorktreeService,
     private readonly bus: EventBus,
     private readonly log: Logger,
   ) {
-    sessions.addListener({ onStatus: (s, prev) => void this.onSessionStatus(s, prev) });
+    sessions.addListener({
+      onStatus: (s) => {
+        if (!s.taskId) return;
+        this.locked(s.taskId, () => this.onSessionStatus(s)).catch((err) => this.log.error('task update failed', { taskId: s.taskId, err: String(err) }));
+      },
+    });
   }
 
   async init(): Promise<void> {
-    for (const t of await this.repo.list()) {
-      if (t.status === 'running' || t.status === 'waiting_approval') await this.transition(t, 'paused');
+    /* Locked: the sessions marked disconnected at boot are reporting on these same tasks. */
+    for (const { id } of await this.repo.list()) {
+      await this.locked(id, async () => {
+        const t = await this.get(id);
+        if (t.status === 'running' || t.status === 'waiting_approval' || t.status === 'queued') await this.save(t, 'paused');
+      });
     }
   }
 
@@ -37,55 +89,92 @@ export class TaskService {
     return t;
   }
 
-  private async transition(task: Task, status: TaskStatus, patch: Partial<Task> = {}): Promise<Task> {
-    let next: TaskStatus;
-    try {
-      next = taskTransition(task.status, status);
-    } catch {
-      this.log.warn('ignored task transition', { id: task.id, from: task.status, to: status });
-      return task;
-    }
-    const now = new Date().toISOString();
-    const updated: Task = { ...task, ...patch, status: next, updatedAt: now };
+  /** Resolves once every queued task mutation has run (shutdown). */
+  async drain(): Promise<void> {
+    while (this.locks.size) await Promise.all(this.locks.values());
+  }
+
+  /** Runs `fn` after every pending mutation of the same task. Never call it from inside a locked section. */
+  private locked<T>(taskId: string, fn: () => Promise<T>): Promise<T> {
+    const run = (this.locks.get(taskId) ?? Promise.resolve()).then(fn);
+    const tail = run.catch(() => undefined);
+    this.locks.set(taskId, tail);
+    void tail.then(() => {
+      if (this.locks.get(taskId) === tail) this.locks.delete(taskId);
+    });
+    return run;
+  }
+
+  /** Persists the task, moving through the legal intermediate statuses when needed. */
+  private async save(task: Task, status: TaskStatus, patch: Partial<Task> = {}, error?: string): Promise<Task> {
+    const path = taskTransitionPath(task.status, status);
+    if (!path) this.log.warn('ignored task transition', { id: task.id, from: task.status, to: status });
+    const next = path ? status : task.status;
+    const updated: Task = { ...task, ...patch, status: next, updatedAt: new Date().toISOString() };
     await this.repo.upsert(updated);
-    if (next !== task.status) {
-      this.bus.publish('TaskUpdated', { task: updated });
-      if (next === 'completed') this.bus.publish('TaskCompleted', { task: updated });
-      if (next === 'failed') this.bus.publish('TaskFailed', { task: updated, error: patch.objective ?? '' });
-    }
+    this.bus.publish('TaskUpdated', { task: updated });
+    if (updated.progress !== task.progress) this.bus.publish('TaskProgressChanged', { taskId: task.id, progress: updated.progress });
+    if (next !== task.status && next === 'completed') this.bus.publish('TaskCompleted', { task: updated });
+    if (next !== task.status && next === 'failed') this.bus.publish('TaskFailed', { task: updated, error: error ?? '' });
     return updated;
   }
 
   async create(input: CommandParsedParams<'tasks.create'>): Promise<Task> {
     const ws = await this.workspaces.get(input.workspaceId);
-    const repositoryIds = input.repositoryIds.length ? input.repositoryIds : ws.repositories.slice(0, 1).map((r) => r.id);
-    for (const id of repositoryIds) if (!ws.repositories.some((r) => r.id === id)) throw new RuntimeError('INVALID_PARAMS', `Dépôt inconnu: ${id}`);
-    const now = new Date().toISOString();
+    const known = (id: string) => ws.repositories.some((r) => r.id === id);
+    for (const id of input.repositoryIds) if (!known(id)) throw new RuntimeError('INVALID_PARAMS', `Dépôt inconnu: ${id}`);
+    const mode = input.orchestration;
+    const title = input.title.trim();
+    const objective = input.objective.trim();
+    const plans = input.subtasks.length
+      ? input.subtasks
+      : [{ title: '', instructions: '', provider: input.provider, role: input.role, model: input.model, repositoryId: null, dependsOn: [] }];
+
+    if (mode === 'single' && plans.length !== 1) throw new RuntimeError('INVALID_PARAMS', 'Le mode simple utilise exactement un agent.');
+    if (mode === 'best-of-n' && plans.length < 2) throw new RuntimeError('INVALID_PARAMS', 'Best-of-N demande au moins deux agents.');
+    if ((mode === 'parallel' || mode === 'best-of-n') && input.isolation !== 'worktree') {
+      throw new RuntimeError('INVALID_PARAMS', 'Des agents en parallèle doivent travailler dans des worktrees isolés.');
+    }
+
+    const repositoryIds = input.repositoryIds.length ? [...input.repositoryIds] : ws.repositories.slice(0, 1).map((r) => r.id);
     const taskId = newId('task');
+    const subIds = plans.map(() => newId('sub'));
+    const subtasks: Subtask[] = plans.map((p, i) => {
+      if (p.repositoryId && !known(p.repositoryId)) throw new RuntimeError('INVALID_PARAMS', `Dépôt inconnu: ${p.repositoryId}`);
+      if (p.dependsOn.some((d) => d >= i)) throw new RuntimeError('INVALID_PARAMS', 'Une sous-tâche ne peut dépendre que d’une sous-tâche précédente.');
+      if (mode === 'best-of-n' && p.dependsOn.length) throw new RuntimeError('INVALID_PARAMS', 'Les candidats Best-of-N sont indépendants.');
+      const repositoryId = p.repositoryId ?? repositoryIds[0] ?? null;
+      if (repositoryId && !repositoryIds.includes(repositoryId)) repositoryIds.push(repositoryId);
+      /* Best-of-N candidates all attempt the same objective. */
+      const instructions = (mode === 'best-of-n' ? '' : p.instructions.trim()) || objective || title;
+      return {
+        id: subIds[i]!,
+        taskId,
+        title: p.title.trim() || (plans.length > 1 ? `${title} · ${i + 1}` : title),
+        instructions,
+        assignment: { role: p.role, provider: p.provider, model: p.model },
+        repositoryId,
+        dependsOn: p.dependsOn.map((d) => subIds[d]!),
+        status: 'pending',
+        sessionId: null,
+        worktreeId: null,
+        order: i,
+      };
+    });
+
+    const now = new Date().toISOString();
     const task: Task = {
       id: taskId,
       workspaceId: ws.id,
       ticketId: null,
       ticketKey: input.ticketKey,
-      title: input.title.trim(),
-      objective: input.objective.trim(),
+      title,
+      objective,
       status: 'draft',
-      orchestration: 'single',
+      orchestration: mode,
+      isolation: input.isolation,
       repositoryIds,
-      subtasks: [
-        {
-          id: newId('sub'),
-          taskId,
-          title: input.title.trim(),
-          instructions: input.objective.trim() || input.title.trim(),
-          assignment: { role: input.role, provider: input.provider, model: input.model },
-          repositoryId: repositoryIds[0] ?? null,
-          dependsOn: [],
-          status: 'pending',
-          sessionId: null,
-          order: 0,
-        },
-      ],
+      subtasks,
       progress: 0,
       createdAt: now,
       updatedAt: now,
@@ -97,82 +186,180 @@ export class TaskService {
     return task;
   }
 
-  async start(taskId: string): Promise<{ task: Task; session: AgentSession }> {
-    let task = await this.get(taskId);
-    const subtask = task.subtasks[0];
-    if (!subtask) throw new RuntimeError('INVALID_PARAMS', 'La tâche n’a aucune sous-tâche.');
-    if (task.status === 'running' || task.status === 'waiting_approval') throw new RuntimeError('CONFLICT', 'La tâche est déjà en cours.');
-    task = await this.transition(task, 'queued');
-    const prompt = [task.ticketKey ? `Ticket: ${task.ticketKey}` : null, `Tâche: ${task.title}`, '', subtask.instructions].filter((l) => l !== null).join('\n');
-    const session = await this.sessions.start({
-      workspaceId: task.workspaceId,
-      repositoryId: subtask.repositoryId,
-      taskId: task.id,
-      provider: subtask.assignment.provider,
-      role: subtask.assignment.role,
-      title: task.ticketKey ? `${task.ticketKey} · ${task.title}` : task.title,
-      prompt,
-      model: subtask.assignment.model,
+  /** Starts a draft task, or retries a failed one (failed and cancelled subtasks run again, in the same worktrees). */
+  start(taskId: string): Promise<{ task: Task; sessions: AgentSession[] }> {
+    return this.locked(taskId, async () => {
+      let task = await this.get(taskId);
+      if (!task.subtasks.length) throw new RuntimeError('INVALID_PARAMS', 'La tâche n’a aucune sous-tâche.');
+      if (task.status !== 'draft' && task.status !== 'failed') {
+        throw new RuntimeError('CONFLICT', task.status === 'paused' ? 'La tâche est en pause : reprenez-la.' : 'La tâche est déjà démarrée.');
+      }
+      const subtasks = task.subtasks.map((s) => (s.status === 'failed' || s.status === 'cancelled' ? { ...s, status: 'pending' as const, sessionId: null } : s));
+      task = await this.save(task, 'queued', { subtasks, startedAt: task.startedAt ?? new Date().toISOString() });
+      const { task: advanced, sessions, errors } = await this.advance(task);
+      if (!sessions.length && errors.length) throw new RuntimeError('PROVIDER_UNAVAILABLE', errors[0]!);
+      return { task: advanced, sessions };
     });
-    task = await this.transition(task, 'running', {
-      startedAt: new Date().toISOString(),
-      progress: 10,
-      subtasks: task.subtasks.map((s, i) => (i === 0 ? { ...s, status: 'running', sessionId: session.id } : s)),
+  }
+
+  cancel(taskId: string): Promise<Task> {
+    return this.locked(taskId, async () => {
+      const task = await this.get(taskId);
+      /* Status first: the cancelled sessions' events then find a frozen task and change nothing. */
+      const updated = await this.save(task, 'cancelled', {
+        subtasks: task.subtasks.map((s) => (['pending', 'running', 'waiting_approval'].includes(s.status) ? { ...s, status: 'cancelled' } : s)),
+      });
+      await this.stopSessions(task);
+      return updated;
     });
-    this.bus.publish('TaskProgressChanged', { taskId: task.id, progress: task.progress });
-    return { task, session };
   }
 
-  async cancel(taskId: string): Promise<Task> {
-    const task = await this.get(taskId);
-    for (const s of task.subtasks) if (s.sessionId && this.sessions.isLive(s.sessionId)) await this.sessions.cancel(s.sessionId);
-    return this.transition(task, 'cancelled', { subtasks: task.subtasks.map((s) => (s.status === 'running' || s.status === 'waiting_approval' ? { ...s, status: 'cancelled' } : s)) });
+  /** Stops the agents; running subtasks keep their status so `resume` continues them in the same sessions. */
+  pause(taskId: string): Promise<Task> {
+    return this.locked(taskId, async () => {
+      const task = await this.get(taskId);
+      if (!['queued', 'running', 'waiting_approval'].includes(task.status)) throw new RuntimeError('CONFLICT', 'Seule une tâche en cours peut être mise en pause.');
+      const updated = await this.save(task, 'paused');
+      await this.stopSessions(task);
+      return updated;
+    });
   }
 
-  async pause(taskId: string): Promise<Task> {
-    const task = await this.get(taskId);
-    for (const s of task.subtasks) if (s.sessionId && this.sessions.isLive(s.sessionId)) await this.sessions.cancel(s.sessionId);
-    return this.transition(task, 'paused');
+  resume(taskId: string): Promise<Task> {
+    return this.locked(taskId, async () => {
+      let task = await this.get(taskId);
+      if (task.status !== 'paused') throw new RuntimeError('CONFLICT', 'Seule une tâche en pause peut être reprise.');
+      task = await this.save(task, 'running');
+      for (const sub of task.subtasks) {
+        if (sub.status !== 'running' && sub.status !== 'waiting_approval') continue;
+        try {
+          if (!sub.sessionId) throw new Error('no session');
+          await this.sessions.send(sub.sessionId, RESUME_PROMPT);
+          task = patchSubtask(task, sub.id, { status: 'running' });
+        } catch (err) {
+          /* The provider conversation cannot be resumed: start the subtask over, in the same worktree. */
+          this.log.warn('subtask restarted instead of resumed', { taskId, subtaskId: sub.id, err: String(err) });
+          task = patchSubtask(task, sub.id, { status: 'pending', sessionId: null });
+        }
+      }
+      return (await this.advance(task)).task;
+    });
   }
 
-  async resume(taskId: string): Promise<Task> {
-    const task = await this.get(taskId);
-    const sub = task.subtasks[0];
-    if (!sub?.sessionId) throw new RuntimeError('CONFLICT', 'Aucune session à reprendre.');
-    await this.sessions.send(sub.sessionId, 'Reprends la tâche là où tu t’étais arrêté et termine-la.');
-    return this.transition(task, 'running');
+  private async stopSessions(task: Task): Promise<void> {
+    for (const s of task.subtasks) {
+      if (s.sessionId && this.sessions.isLive(s.sessionId)) await this.sessions.cancel(s.sessionId).catch((err) => this.log.warn('session cancel failed', { sessionId: s.sessionId, err: String(err) }));
+    }
   }
 
-  private async onSessionStatus(session: AgentSession, previous: SessionStatus): Promise<void> {
-    if (!session.taskId) return;
-    const task = await this.repo.get(session.taskId);
-    if (!task) return;
+  /**
+   * Cancels blocked subtasks, launches every runnable one, then derives and saves the task
+   * status. Runs until the plan stops changing (a failed launch can block further steps).
+   */
+  private async advance(task: Task, cause?: string): Promise<{ task: Task; sessions: AgentSession[]; errors: string[] }> {
+    const sessions: AgentSession[] = [];
+    const errors: string[] = cause ? [cause] : [];
+    for (;;) {
+      for (const b of blockedSubtasks(task)) task = patchSubtask(task, b.id, { status: 'cancelled' });
+      const runnable = SCHEDULABLE.includes(task.status) ? runnableSubtasks(task) : [];
+      if (!runnable.length) break;
+      for (const sub of runnable) {
+        try {
+          const { session, worktree } = await this.launch(task, sub);
+          task = patchSubtask(task, sub.id, { status: 'running', sessionId: session.id, worktreeId: worktree?.id ?? sub.worktreeId });
+          sessions.push(session);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.log.warn('subtask launch failed', { taskId: task.id, subtaskId: sub.id, err: message });
+          errors.push(message);
+          task = patchSubtask(task, sub.id, { status: 'failed' });
+        }
+      }
+    }
+    const status = FROZEN.includes(task.status) ? task.status : aggregateTaskStatus(task);
+    const saved = await this.save(task, status, { progress: status === 'review' ? 90 : taskProgress(task) }, errors[0]);
+    return { task: saved, sessions, errors };
+  }
+
+  private async launch(task: Task, sub: Subtask): Promise<{ session: AgentSession; worktree: Worktree | null }> {
+    const ws = await this.workspaces.get(task.workspaceId);
+    const repositoryId = sub.repositoryId ?? task.repositoryIds[0] ?? ws.repositories[0]?.id ?? null;
+    const worktree = task.isolation === 'worktree' && repositoryId ? await this.worktrees.ensureForSubtask(task, sub, repositoryId) : null;
+    const prefix = task.ticketKey ? `${task.ticketKey} · ${task.title}` : task.title;
+    const session = await this.sessions.start(
+      {
+        workspaceId: task.workspaceId,
+        repositoryId,
+        taskId: task.id,
+        provider: sub.assignment.provider,
+        role: sub.assignment.role,
+        title: (task.subtasks.length > 1 ? `${prefix} · ${sub.title}` : prefix).slice(0, 200),
+        prompt: await this.buildPrompt(task, sub, worktree),
+        model: sub.assignment.model,
+      },
+      worktree ? { cwd: worktree.path, worktreeId: worktree.id, subtaskId: sub.id } : undefined,
+    );
+    return { session, worktree };
+  }
+
+  private async buildPrompt(task: Task, sub: Subtask, worktree: Worktree | null): Promise<string> {
+    const lines: (string | null)[] = [task.ticketKey ? `Ticket : ${task.ticketKey}` : null, `Tâche : ${task.title}`, ''];
+    const multi = task.subtasks.length > 1;
+    if (multi && task.objective && task.objective !== sub.instructions) lines.push('Objectif global :', task.objective, '');
+    if (task.orchestration === 'pipeline' || task.orchestration === 'sequential') {
+      const ordered = orderedSubtasks(task);
+      lines.push(`Étape ${ordered.findIndex((s) => s.id === sub.id) + 1}/${ordered.length} — ${sub.title}`);
+    } else if (multi) {
+      lines.push(`Ta partie : ${sub.title}`);
+    }
+    lines.push(sub.instructions);
+    if (worktree) {
+      lines.push('', `Tu travailles dans un worktree Git isolé (${worktree.path}) sur la branche \`${worktree.branch}\`. Reste dans ce dossier et ne change pas de branche.`);
+    }
+    if (task.orchestration === 'best-of-n') {
+      lines.push('', 'D’autres agents tentent le même objectif en parallèle dans leurs propres worktrees ; un humain choisira la meilleure proposition.');
+    }
+    if (task.orchestration === 'sequential' && subtaskDependencies(task, sub).length) {
+      lines.push('', 'Les étapes précédentes ont été réalisées dans ce même dossier : pars de leur travail.');
+    }
+    if (task.orchestration === 'pipeline') {
+      const byId = new Map(task.subtasks.map((s) => [s.id, s]));
+      const handoffs: string[] = [];
+      for (const depId of subtaskDependencies(task, sub)) {
+        const dep = byId.get(depId);
+        if (!dep?.sessionId) continue;
+        const output = await this.lastAssistantText(dep.sessionId);
+        handoffs.push(`### ${dep.title} (${dep.assignment.role})`, output || '(aucune sortie)', '');
+      }
+      if (handoffs.length) lines.push('', 'Résultat des étapes précédentes (même dossier de travail) :', '', ...handoffs);
+    }
+    return lines.filter((l) => l !== null).join('\n').trim();
+  }
+
+  private async lastAssistantText(sessionId: string): Promise<string> {
+    const entries = await this.sessions.entries(sessionId, 0);
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i]!;
+      if (e.kind === 'assistant_text' && e.text.trim()) {
+        return e.text.length > HANDOFF_MAX_CHARS ? `${e.text.slice(0, HANDOFF_MAX_CHARS)}…` : e.text;
+      }
+    }
+    return '';
+  }
+
+  private async onSessionStatus(session: AgentSession): Promise<void> {
+    let task = await this.repo.get(session.taskId!);
+    if (!task || FROZEN.includes(task.status)) return;
     const sub = task.subtasks.find((s) => s.sessionId === session.id);
     if (!sub) return;
-    const patchSub = (status: typeof sub.status) => task.subtasks.map((s) => (s.id === sub.id ? { ...s, status } : s));
-    switch (session.status) {
-      case 'waiting_approval':
-        await this.transition(task, 'waiting_approval', { subtasks: patchSub('waiting_approval') });
-        return;
-      case 'running':
-        if (previous === 'waiting_approval' || task.status === 'review') await this.transition(task, 'running', { subtasks: patchSub('running') });
-        return;
-      case 'idle':
-        /* Agent finished its turn: the work is ready for the human to review. */
-        await this.transition(task, 'review', { progress: 90, subtasks: patchSub('completed') });
-        this.bus.publish('TaskProgressChanged', { taskId: task.id, progress: 90 });
-        return;
-      case 'failed':
-        await this.transition(task, 'failed', { subtasks: patchSub('failed'), objective: task.objective });
-        return;
-      case 'cancelled':
-        if (task.status !== 'cancelled' && task.status !== 'paused') await this.transition(task, 'cancelled', { subtasks: patchSub('cancelled') });
-        return;
-      case 'disconnected':
-        await this.transition(task, 'paused');
-        return;
-      default:
-        return;
+    if (session.status === 'disconnected') {
+      /* Only an agent that was working interrupts the task; an idle one (task in review) does not. */
+      if (sub.status === 'running' || sub.status === 'waiting_approval') await this.save(task, 'paused');
+      return;
     }
+    const status = SUBTASK_STATUS_FROM_SESSION[session.status];
+    if (!status) return;
+    task = patchSubtask(task, sub.id, { status });
+    await this.advance(task, status === 'failed' ? (session.error ?? undefined) : undefined);
   }
 }

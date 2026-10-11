@@ -8,6 +8,13 @@
       "when": 1791736538873,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791738569441,
+      "tag": "0001_worktree_orchestration",
+      "breakpoints": true
     }
   ]
 }

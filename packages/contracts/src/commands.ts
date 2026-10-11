@@ -5,11 +5,14 @@ import {
   AgentSessionSchema,
   ApprovalRequestSchema,
   MachineSchema,
+  OrchestrationModeSchema,
   ProviderStatusSchema,
   SessionEntrySchema,
+  TaskIsolationSchema,
   TaskSchema,
   WorkspaceSchema,
   WorkspaceTypeSchema,
+  WorktreeSchema,
 } from '@codeo/domain';
 
 /**
@@ -59,6 +62,18 @@ export const HomeSummarySchema = z.object({
 });
 export type HomeSummary = z.infer<typeof HomeSummarySchema>;
 
+/** One agent of a task plan. `dependsOn` holds indexes of earlier entries (ids do not exist yet). */
+export const SubtaskPlanSchema = z.object({
+  title: z.string().max(200).default(''),
+  instructions: z.string().max(20_000).default(''),
+  provider: AgentProviderIdSchema,
+  role: AgentRoleSchema.default('developer'),
+  model: z.string().nullable().default(null),
+  repositoryId: z.string().nullable().default(null),
+  dependsOn: z.array(z.number().int().min(0)).default([]),
+});
+export type SubtaskPlan = z.infer<typeof SubtaskPlanSchema>;
+
 export const commands = {
   'runtime.info': define(z.object({}), RuntimeInfoSchema, 'read'),
 
@@ -98,21 +113,38 @@ export const commands = {
       objective: z.string().max(20_000).default(''),
       ticketKey: z.string().max(40).nullable().default(null),
       repositoryIds: z.array(z.string()).default([]),
+      /** Default agent; also the single agent when `subtasks` is empty. */
       provider: AgentProviderIdSchema,
       role: AgentRoleSchema.default('developer'),
       model: z.string().nullable().default(null),
+      orchestration: OrchestrationModeSchema.default('single'),
+      isolation: TaskIsolationSchema.default('worktree'),
+      subtasks: z.array(SubtaskPlanSchema).max(8).default([]),
     }),
     TaskSchema,
     'session:write',
   ),
+  /** Starts (or retries) a task; returns the sessions launched right away (later steps start as dependencies complete). */
   'tasks.start': define(
     z.object({ taskId: z.string() }),
-    z.object({ task: TaskSchema, session: AgentSessionSchema }),
+    z.object({ task: TaskSchema, sessions: z.array(AgentSessionSchema) }),
     'session:write',
   ),
   'tasks.cancel': define(z.object({ taskId: z.string() }), TaskSchema, 'session:write'),
   'tasks.pause': define(z.object({ taskId: z.string() }), TaskSchema, 'session:write'),
   'tasks.resume': define(z.object({ taskId: z.string() }), TaskSchema, 'session:write'),
+
+  'worktrees.list': define(
+    z.object({ workspaceId: z.string().optional(), taskId: z.string().optional() }),
+    z.array(WorktreeSchema),
+    'read',
+  ),
+  /** Removes a worktree directory (its branch is kept). Refused while dirty unless `force`, and while an agent works in it. */
+  'worktrees.remove': define(
+    z.object({ worktreeId: z.string(), force: z.boolean().default(false) }),
+    z.object({ removed: z.boolean() }),
+    'workspace:admin',
+  ),
 
   'sessions.list': define(
     z.object({ workspaceId: z.string().optional(), taskId: z.string().optional() }),

@@ -1,6 +1,6 @@
 import type { AgentProvider, ProviderSessionHandle, StartSessionOptions } from '@codeo/agent-provider-core';
 import type { ProviderStatus } from '@codeo/domain';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -16,6 +16,10 @@ class FakeProvider implements AgentProvider {
   readonly id = 'claude-code' as const;
   readonly displayName = 'Fake';
   lastOpts: StartSessionOptions | null = null;
+  /** Every session start, with the prompt of its first turn. */
+  starts: { cwd: string; model: string | null; prompts: string[] }[] = [];
+  /** Turns whose prompt contains `wait-me` block until the test opens the gate. */
+  gate: { promise: Promise<void>; open: () => void } = makeGate();
   async detect(): Promise<ProviderStatus> {
     return {
       provider: 'claude-code', displayName: 'Fake', installed: true, version: '0.0.0', executable: '/fake', authenticated: 'yes', authDetail: null,
@@ -25,12 +29,17 @@ class FakeProvider implements AgentProvider {
   }
   async startSession(opts: StartSessionOptions): Promise<ProviderSessionHandle> {
     this.lastOpts = opts;
+    if (opts.model === 'broken') throw new Error('Fake provider crashed');
+    const record = { cwd: opts.cwd, model: opts.model, prompts: [] as string[] };
+    this.starts.push(record);
     let sid: string | null = opts.resumeProviderSessionId;
     return {
       get providerSessionId() { return sid; },
       send: async (text) => {
+        record.prompts.push(text);
         /* Like the real adapters, accept the turn immediately and run it asynchronously. */
         void (async () => {
+        if (text.includes('wait-me')) await this.gate.promise;
         sid ??= 'prov-1';
         opts.onEvent({ type: 'session_started', providerSessionId: sid, model: 'fake-model' });
         opts.onEvent({ type: 'text_delta', blockId: 'b1', delta: 'Je ' });
@@ -50,7 +59,15 @@ class FakeProvider implements AgentProvider {
   }
 }
 
+function makeGate() {
+  let open!: () => void;
+  const promise = new Promise<void>((r) => (open = r));
+  return { promise, open };
+}
+
 let repoDir: string;
+let worktreesDir: string;
+const fake = new FakeProvider();
 let runtime: Runtime;
 let server: RuntimeServer;
 let client: RuntimeClient;
@@ -58,9 +75,14 @@ const TOKEN = 'test-token-0123456789abcdef';
 
 beforeAll(async () => {
   repoDir = mkdtempSync(path.join(os.tmpdir(), 'codeo-rt-'));
+  worktreesDir = mkdtempSync(path.join(os.tmpdir(), 'codeo-wt-'));
   await git(['init', '-q', '-b', 'main'], { cwd: repoDir });
+  await git(['config', 'user.email', 'test@codeo.local'], { cwd: repoDir });
+  await git(['config', 'user.name', 'Codeo Test'], { cwd: repoDir });
   writeFileSync(path.join(repoDir, 'a.txt'), 'a');
-  runtime = await createRuntime({ dataDir: ':memory:', providers: [new FakeProvider()], logger: createLogger({ level: 'error' }) });
+  await git(['add', '.'], { cwd: repoDir });
+  await git(['commit', '-q', '-m', 'init'], { cwd: repoDir });
+  runtime = await createRuntime({ dataDir: ':memory:', worktreesDir, providers: [fake], logger: createLogger({ level: 'error' }) });
   await runtime.services.providers.detectAll();
   server = await startServer({ runtime, token: TOKEN, logger: createLogger({ level: 'error' }) });
   client = new RuntimeClient({ url: `ws://127.0.0.1:${server.port}`, token: TOKEN, client: { name: 'test', version: '0', kind: 'test' }, createWebSocket: (u) => new WebSocket(u) as never, reconnect: false });
@@ -71,6 +93,7 @@ afterAll(async () => {
   await server.close();
   await runtime.shutdown();
   rmSync(repoDir, { recursive: true, force: true });
+  rmSync(worktreesDir, { recursive: true, force: true });
 });
 
 const waitFor = async (pred: () => boolean | Promise<boolean>, ms = 3000) => {
@@ -99,7 +122,8 @@ describe('runtime end-to-end over the protocol', () => {
     client.on('event', ({ event }) => received.push(event.type));
     const task = await client.request('tasks.create', { workspaceId: ws!.id, title: 'Dire bonjour', objective: 'Écris bonjour', provider: 'claude-code' });
     expect(task.status).toBe('draft');
-    const { session } = await client.request('tasks.start', { taskId: task.id });
+    const { sessions: [session] } = await client.request('tasks.start', { taskId: task.id });
+    if (!session) throw new Error('no session');
     expect(session.status).toBe('running');
     await waitFor(() => received.includes('SessionEntryAppended') && received.includes('TaskUpdated'));
     await runtime.bus.flush();
@@ -150,5 +174,147 @@ describe('runtime end-to-end over the protocol', () => {
     await waitFor(() => seen.length > 0);
     expect(seen[0]).toBe(1);
     late.close();
+  });
+});
+
+describe('orchestration and worktrees', () => {
+  const waitTask = (taskId: string, status: string) => waitFor(async () => (await client.request('tasks.get', { taskId })).status === status);
+  const wsId = async () => (await client.request('workspaces.list', {}))[0]!.id;
+  const agent = (extra: Record<string, unknown> = {}) => ({ provider: 'claude-code' as const, ...extra });
+
+  it('runs a single task in its own worktree, outside the repository', async () => {
+    const before = fake.starts.length;
+    const task = await client.request('tasks.create', { workspaceId: await wsId(), title: 'Réparer le login', ticketKey: 'PROJ-7', objective: 'Corrige', provider: 'claude-code' });
+    expect(task.isolation).toBe('worktree');
+    const { sessions } = await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'review');
+    const [wt] = await client.request('worktrees.list', { taskId: task.id });
+    expect(wt?.branch).toMatch(/^codeo\/proj-7-reparer-le-login-[0-9a-f]{8}$/);
+    expect(wt?.path.startsWith(worktreesDir)).toBe(true);
+    expect(fake.starts[before]?.cwd).toBe(wt?.path);
+    expect(sessions[0]?.worktreeId).toBe(wt?.id);
+    expect(fake.starts[before]?.prompts[0]).toContain(wt!.branch);
+    expect((await client.request('tasks.get', { taskId: task.id })).subtasks[0]?.worktreeId).toBe(wt?.id);
+  });
+
+  it('chains pipeline steps in one shared worktree and hands each step the previous output', async () => {
+    const before = fake.starts.length;
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Pipeline', objective: 'Ajouter un export CSV', provider: 'claude-code', orchestration: 'pipeline',
+      subtasks: [agent({ title: 'Plan', role: 'planner' }), agent({ title: 'Code', role: 'backend' }), agent({ title: 'Tests', role: 'qa' })],
+    });
+    const started = await client.request('tasks.start', { taskId: task.id });
+    expect(started.sessions).toHaveLength(1);
+    await waitTask(task.id, 'review');
+    const runs = fake.starts.slice(before);
+    expect(runs).toHaveLength(3);
+    expect(new Set(runs.map((r) => r.cwd)).size).toBe(1);
+    expect(runs[0]?.prompts[0]).toContain('Étape 1/3 — Plan');
+    expect(runs[0]?.prompts[0]).not.toContain('Résultat des étapes précédentes');
+    expect(runs[2]?.prompts[0]).toContain('### Code (backend)');
+    expect(runs[2]?.prompts[0]).toContain('Je commence.');
+    expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(1);
+    const done = await client.request('tasks.get', { taskId: task.id });
+    expect(done.subtasks.map((s) => s.status)).toEqual(['completed', 'completed', 'completed']);
+    expect(done.progress).toBe(90);
+  });
+
+  it('runs parallel subtasks in separate worktrees and honours dependencies', async () => {
+    const before = fake.starts.length;
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Front et back', provider: 'claude-code', orchestration: 'parallel',
+      subtasks: [agent({ title: 'API', role: 'backend' }), agent({ title: 'UI', role: 'frontend' }), agent({ title: 'Revue', role: 'reviewer', dependsOn: [0, 1] })],
+    });
+    const started = await client.request('tasks.start', { taskId: task.id });
+    expect(started.sessions).toHaveLength(2);
+    await waitTask(task.id, 'review');
+    const runs = fake.starts.slice(before);
+    expect(runs).toHaveLength(3);
+    expect(new Set(runs.map((r) => r.cwd)).size).toBe(3);
+    const wts = await client.request('worktrees.list', { taskId: task.id });
+    expect(wts.map((w) => w.branch.slice(-2)).sort()).toEqual(['-1', '-2', '-3']);
+  });
+
+  it('refuses parallel agents without isolation and inconsistent plans', async () => {
+    const workspaceId = await wsId();
+    await expect(client.request('tasks.create', { workspaceId, title: 'x', provider: 'claude-code', orchestration: 'parallel', isolation: 'none', subtasks: [agent(), agent()] })).rejects.toThrow(/worktrees isolés/);
+    await expect(client.request('tasks.create', { workspaceId, title: 'x', provider: 'claude-code', orchestration: 'best-of-n', subtasks: [agent()] })).rejects.toThrow(/deux agents/);
+    await expect(client.request('tasks.create', { workspaceId, title: 'x', provider: 'claude-code', orchestration: 'parallel', subtasks: [agent({ dependsOn: [1] }), agent()] })).rejects.toThrow(/précédente/);
+  });
+
+  it('keeps best-of-n going when a candidate fails, and lets the human review the survivors', async () => {
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Trois essais', objective: 'Optimiser la requête', provider: 'claude-code', orchestration: 'best-of-n',
+      subtasks: [agent(), agent({ model: 'broken' }), agent()],
+    });
+    const started = await client.request('tasks.start', { taskId: task.id });
+    expect(started.sessions).toHaveLength(2);
+    await waitTask(task.id, 'review');
+    const after = await client.request('tasks.get', { taskId: task.id });
+    expect(after.subtasks.map((s) => s.status)).toEqual(['completed', 'failed', 'completed']);
+  });
+
+  it('fails a pipeline whose step cannot start, cancels the blocked steps, and retries in the same worktree', async () => {
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Fragile', provider: 'claude-code', orchestration: 'sequential',
+      subtasks: [agent(), agent({ model: 'broken' }), agent()],
+    });
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'failed');
+    const failed = await client.request('tasks.get', { taskId: task.id });
+    expect(failed.subtasks.map((s) => s.status)).toEqual(['completed', 'failed', 'cancelled']);
+    /* Retry: the completed step is kept, the others run again — still broken, so it fails again, without a new worktree. */
+    await expect(client.request('tasks.start', { taskId: task.id })).rejects.toThrow(/crashed/);
+    expect((await client.request('tasks.get', { taskId: task.id })).status).toBe('failed');
+    expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(1);
+  });
+
+  it('pauses and resumes the running agents of a task', async () => {
+    fake.gate = makeGate();
+    const task = await client.request('tasks.create', { workspaceId: await wsId(), title: 'Longue', objective: 'wait-me', provider: 'claude-code' });
+    const { sessions: [session] } = await client.request('tasks.start', { taskId: task.id });
+    const paused = await client.request('tasks.pause', { taskId: task.id });
+    expect(paused.status).toBe('paused');
+    await waitFor(async () => (await client.request('sessions.get', { sessionId: session!.id })).session.status === 'cancelled');
+    expect((await client.request('tasks.get', { taskId: task.id })).status).toBe('paused');
+    fake.gate.open();
+    const resumed = await client.request('tasks.resume', { taskId: task.id });
+    expect(resumed.status).toBe('running');
+    await waitTask(task.id, 'review');
+    const { entries } = await client.request('sessions.get', { sessionId: session!.id });
+    expect(entries.some((e) => e.kind === 'user_message' && e.text.startsWith('Reprends'))).toBe(true);
+  });
+
+  it('removes a worktree only when clean or forced, and keeps its branch', async () => {
+    const task = (await client.request('tasks.list', {})).find((t) => t.title === 'Réparer le login')!;
+    const [wt] = await client.request('worktrees.list', { taskId: task.id });
+    writeFileSync(path.join(wt!.path, 'travail.txt'), 'non commité');
+    expect((await client.request('worktrees.list', { taskId: task.id }))[0]?.dirty).toBe(true);
+    await expect(client.request('worktrees.remove', { worktreeId: wt!.id })).rejects.toThrow(/non commitées/);
+    expect(existsSync(wt!.path)).toBe(true);
+    expect(await client.request('worktrees.remove', { worktreeId: wt!.id, force: true })).toEqual({ removed: true });
+    expect(existsSync(wt!.path)).toBe(false);
+    expect(await client.request('worktrees.list', { taskId: task.id })).toHaveLength(0);
+    await expect(git(['show-ref', '--verify', `refs/heads/${wt!.branch}`], { cwd: repoDir })).resolves.toBeTruthy();
+  });
+});
+
+describe('shutdown', () => {
+  it('leaves tasks in review untouched when their idle agents disconnect', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'codeo-rt2-'));
+    const rt = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false });
+    await rt.services.providers.detectAll();
+    const ws = await rt.services.workspaces.create({ name: 'w', type: 'monorepo', description: '', repositoryPaths: [repoDir] });
+    const task = await rt.services.tasks.create({ workspaceId: ws.id, title: 'Revue', objective: '', ticketKey: null, repositoryIds: [], provider: 'claude-code', role: 'developer', model: null, orchestration: 'single', isolation: 'worktree', subtasks: [] });
+    await rt.services.tasks.start(task.id);
+    await waitFor(async () => (await rt.services.tasks.get(task.id)).status === 'review');
+    await rt.shutdown();
+    const reopened = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false });
+    expect((await reopened.services.tasks.get(task.id)).status).toBe('review');
+    await reopened.shutdown();
+    for (const w of await git(['worktree', 'list', '--porcelain'], { cwd: repoDir }).then((r) => r.stdout.split('\n').filter((l) => l.startsWith('worktree ') && l.includes(dir)))) {
+      await git(['worktree', 'remove', '--force', w.slice(9)], { cwd: repoDir });
+    }
+    rmSync(dir, { recursive: true, force: true });
   });
 });

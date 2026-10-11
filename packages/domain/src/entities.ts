@@ -129,7 +129,12 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 export const OrchestrationModeSchema = z.enum(['single', 'sequential', 'parallel', 'pipeline', 'best-of-n']);
 export type OrchestrationMode = z.infer<typeof OrchestrationModeSchema>;
 
+/** `worktree`: every agent works in an isolated Git worktree; `none`: agents work in the repository itself. */
+export const TaskIsolationSchema = z.enum(['worktree', 'none']);
+export type TaskIsolation = z.infer<typeof TaskIsolationSchema>;
+
 export const SubtaskStatusSchema = z.enum(['pending', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled']);
+export type SubtaskStatus = z.infer<typeof SubtaskStatusSchema>;
 export const SubtaskSchema = z.object({
   id: IdSchema,
   taskId: IdSchema,
@@ -140,6 +145,7 @@ export const SubtaskSchema = z.object({
   dependsOn: z.array(IdSchema).default([]),
   status: SubtaskStatusSchema,
   sessionId: IdSchema.nullable().default(null),
+  worktreeId: IdSchema.nullable().default(null),
   order: z.number().int(),
 });
 export type Subtask = z.infer<typeof SubtaskSchema>;
@@ -153,6 +159,7 @@ export const TaskSchema = z.object({
   objective: z.string().default(''),
   status: TaskStatusSchema,
   orchestration: OrchestrationModeSchema.default('single'),
+  isolation: TaskIsolationSchema.default('worktree'),
   repositoryIds: z.array(IdSchema).default([]),
   subtasks: z.array(SubtaskSchema).default([]),
   progress: z.number().min(0).max(100).default(0),
@@ -168,8 +175,11 @@ export type Task = z.infer<typeof TaskSchema>;
 /* ------------------------------------------------------------------ */
 export const WorktreeSchema = z.object({
   id: IdSchema,
+  workspaceId: IdSchema,
   repositoryId: IdSchema,
   taskId: IdSchema.nullable(),
+  /** Set when the worktree belongs to one subtask (parallel modes); null when shared by the task's steps. */
+  subtaskId: IdSchema.nullable().default(null),
   path: z.string(),
   branch: z.string(),
   baseBranch: z.string(),

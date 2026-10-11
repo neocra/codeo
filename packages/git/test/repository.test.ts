@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createWorktree, git, inspectRepository, removeWorktree } from '../src/index';
+import { branchExists, createWorktree, git, inspectRepository, removeWorktree, resolveCommit } from '../src/index';
 
 let dir: string;
 beforeAll(async () => {
@@ -43,6 +43,24 @@ describe('worktrees', () => {
     await expect(removeWorktree(dir, wt)).rejects.toThrow(/uncommitted/);
     await removeWorktree(dir, wt, { force: true });
     expect((await inspectRepository(dir)).worktrees).toHaveLength(1);
+  });
+  it('reattaches an existing branch so its commits survive a worktree removal', async () => {
+    const wt = path.join(dir, '.worktrees', 'feature-b');
+    await createWorktree({ root: dir, path: wt, branch: 'feature/b', baseBranch: 'main' });
+    writeFileSync(path.join(wt, 'b.txt'), 'b');
+    await git(['add', '.'], { cwd: wt });
+    await git(['commit', '-q', '-m', 'b'], { cwd: wt });
+    const head = await resolveCommit(wt, 'HEAD');
+    await removeWorktree(dir, wt);
+    expect(await branchExists(dir, 'feature/b')).toBe(true);
+    const again = await createWorktree({ root: dir, path: wt, branch: 'feature/b', baseBranch: 'main' });
+    expect(again.head).toBe(head);
+    await removeWorktree(dir, wt);
+  });
+  it('resolves commits and tolerates unknown refs', async () => {
+    expect(await resolveCommit(dir, 'main')).toMatch(/^[0-9a-f]{40}$/);
+    expect(await resolveCommit(dir, 'nope')).toBeNull();
+    expect(await resolveCommit(dir, '--output=/tmp/x')).toBeNull();
   });
   it('rejects dangerous branch names', async () => {
     await expect(

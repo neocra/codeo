@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { openDatabase, type OpenedDatabase, SessionRepo, WorkspaceRepo, EventRepo } from '../src/index';
+import { openDatabase, type OpenedDatabase, SessionRepo, WorkspaceRepo, EventRepo, WorktreeRepo } from '../src/index';
 
 let opened: OpenedDatabase;
 beforeAll(async () => {
@@ -41,6 +41,19 @@ describe('database', () => {
     expect(entries.map((e) => e.kind)).toEqual(['user_message', 'assistant_text']);
     expect(await sessions.lastSeq('ses_1')).toBe(2);
     expect(await sessions.entries('ses_1', 1)).toHaveLength(1);
+  });
+
+  it('finds worktrees by task lane', async () => {
+    const worktrees = new WorktreeRepo(opened.db);
+    const base = { workspaceId: 'ws_1', repositoryId: 'repo_1', taskId: 'task_1', baseBranch: 'main', dirty: false, createdAt: now };
+    await worktrees.insert({ ...base, id: 'wt_shared', subtaskId: null, path: '/tmp/wt/shared', branch: 'codeo/a' });
+    await worktrees.insert({ ...base, id: 'wt_lane', subtaskId: 'sub_2', path: '/tmp/wt/lane', branch: 'codeo/a-2' });
+    expect((await worktrees.findLane('task_1', 'repo_1', null))?.id).toBe('wt_shared');
+    expect((await worktrees.findLane('task_1', 'repo_1', 'sub_2'))?.id).toBe('wt_lane');
+    expect(await worktrees.findLane('task_1', 'repo_1', 'sub_9')).toBeNull();
+    expect(await worktrees.list({ taskId: 'task_1' })).toHaveLength(2);
+    await worktrees.delete('wt_lane');
+    expect(await worktrees.list({ workspaceId: 'ws_1' })).toHaveLength(1);
   });
 
   it('assigns monotonic sequence numbers to events', async () => {

@@ -4,7 +4,7 @@ import { ClaudeCodeProvider } from '@codeo/agent-provider-claude-code';
 import { CodexProvider } from '@codeo/agent-provider-codex';
 import type { AgentProvider } from '@codeo/agent-provider-core';
 import { commands, RuntimeError, type CommandName, type CommandParsedParams, type CommandResult, type CommandScope, type RuntimeInfo } from '@codeo/contracts';
-import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, type OpenedDatabase } from '@codeo/database';
+import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, WorktreeRepo, type OpenedDatabase } from '@codeo/database';
 import type { Machine } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
 import { createLogger, newId, type Logger } from '@codeo/shared-utils';
@@ -14,6 +14,7 @@ import { ProviderRegistry } from './services/providers';
 import { SessionService } from './services/sessions';
 import { TaskService } from './services/tasks';
 import { WorkspaceService } from './services/workspaces';
+import { WorktreeService } from './services/worktrees';
 import { RUNTIME_VERSION } from './version';
 
 export interface RuntimeOptions {
@@ -23,6 +24,8 @@ export interface RuntimeOptions {
   /** Skip provider detection at boot (tests). */
   detectProviders?: boolean;
   migrationsFolder?: string;
+  /** Where agent worktrees are created. Defaults to `<dataDir>/worktrees` (a temp dir for in-memory runtimes). */
+  worktreesDir?: string;
 }
 
 export interface CallContext {
@@ -42,6 +45,7 @@ export interface Runtime {
     sessions: SessionService;
     tasks: TaskService;
     approvals: ApprovalService;
+    worktrees: WorktreeService;
   };
   /** Validates params, checks authorization, executes; returns a validated result. */
   call<C extends CommandName>(command: C, rawParams: unknown, ctx: CallContext): Promise<CommandResult<C>>;
@@ -72,7 +76,9 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const workspaces = new WorkspaceService(new WorkspaceRepo(db.db), bus, machineId);
   const approvals = new ApprovalService(new ApprovalRepo(db.db), bus, log.child('approvals'));
   const sessions = new SessionService(new SessionRepo(db.db), workspaces, providers, approvals, bus, log.child('sessions'));
-  const tasks = new TaskService(new TaskRepo(db.db), workspaces, sessions, bus, log.child('tasks'));
+  const worktreesDir = opts.worktreesDir ?? (opts.dataDir === ':memory:' ? path.join(os.tmpdir(), 'codeo-worktrees') : path.join(opts.dataDir, 'worktrees'));
+  const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir);
+  const tasks = new TaskService(new TaskRepo(db.db), workspaces, sessions, worktrees, bus, log.child('tasks'));
   await approvals.init();
   await sessions.init();
   await tasks.init();
@@ -106,6 +112,15 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'tasks.cancel': async (p) => tasks.cancel(p.taskId),
     'tasks.pause': async (p) => tasks.pause(p.taskId),
     'tasks.resume': async (p) => tasks.resume(p.taskId),
+    'worktrees.list': async (p) => worktrees.list(p),
+    'worktrees.remove': async (p) => {
+      const wt = await worktrees.get(p.worktreeId);
+      const busy = (await sessions.list(wt.taskId ? { taskId: wt.taskId } : { workspaceId: wt.workspaceId })).some(
+        (s) => s.worktreeId === wt.id && sessions.isLive(s.id) && (s.status === 'running' || s.status === 'waiting_approval'),
+      );
+      if (busy) throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
+      return { removed: await worktrees.remove(p.worktreeId, { force: p.force }) };
+    },
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),
     'sessions.start': async (p) => sessions.start(p),
@@ -149,11 +164,12 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   return {
     info,
     bus,
-    services: { providers, workspaces, sessions, tasks, approvals },
+    services: { providers, workspaces, sessions, tasks, approvals, worktrees },
     call,
     async shutdown() {
       approvals.shutdown();
       await sessions.shutdown();
+      await tasks.drain();
       await bus.flush();
       db.close();
     },

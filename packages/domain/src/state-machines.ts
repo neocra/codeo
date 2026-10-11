@@ -57,6 +57,31 @@ export const canTransitionTask = (from: TaskStatus, to: TaskStatus): boolean =>
 export const canTransitionSession = (from: SessionStatus, to: SessionStatus): boolean =>
   from === to || SESSION_TRANSITIONS[from].includes(to);
 
+/**
+ * Shortest legal route between two task statuses (excluding `from`), or null. Lets an
+ * aggregator that observed several subtask changes at once (e.g. `waiting_approval` →
+ * `review`) move through the intermediate states instead of breaking the machine.
+ */
+export function taskTransitionPath(from: TaskStatus, to: TaskStatus): TaskStatus[] | null {
+  if (from === to) return [];
+  const prev = new Map<TaskStatus, TaskStatus>();
+  const queue: TaskStatus[] = [from];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const next of TASK_TRANSITIONS[cur]) {
+      if (next === from || prev.has(next)) continue;
+      prev.set(next, cur);
+      if (next === to) {
+        const path: TaskStatus[] = [to];
+        for (let s = cur; s !== from; s = prev.get(s)!) path.unshift(s);
+        return path;
+      }
+      queue.push(next);
+    }
+  }
+  return null;
+}
+
 /** Approval decisions must respect expiry — an expired request can never be accepted. */
 export function approvalTransition(
   approval: Pick<ApprovalRequest, 'status' | 'expiresAt'>,

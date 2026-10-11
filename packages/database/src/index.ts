@@ -1,2 +1,2 @@
 export { openDatabase, defaultMigrationsFolder, schema, type Database, type OpenedDatabase } from './client';
-export { WorkspaceRepo, TaskRepo, SessionRepo, ApprovalRepo, EventRepo, SettingsRepo } from './repositories';
+export { WorkspaceRepo, TaskRepo, SessionRepo, ApprovalRepo, EventRepo, SettingsRepo, WorktreeRepo } from './repositories';
