@@ -157,6 +157,8 @@ export class TaskService {
     const next = status;
     const updated: Task = { ...task, ...patch, status: next, updatedAt: new Date().toISOString() };
     await this.repo.upsert(updated);
+    /* Consumers only ever see legal edges: intermediate states of a multi-step path are announced before the final one. */
+    for (const intermediate of path.slice(0, -1)) this.bus.publish('TaskUpdated', { task: { ...updated, status: intermediate } });
     this.bus.publish('TaskUpdated', { task: updated });
     if (updated.progress !== task.progress) this.bus.publish('TaskProgressChanged', { taskId: task.id, progress: updated.progress });
     if (next !== task.status && next === 'completed') this.bus.publish('TaskCompleted', { task: updated });

@@ -24,11 +24,13 @@ export function TaskDetail({ task }: { task: Task }) {
   const stopPending = task.status === 'paused' && task.subtasks.some((s) => s.sessionId && (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval')));
   const [error, setError] = useState<string | null>(null);
   const onError = (e: unknown) => setError(describeError(e, t));
+  /* A new attempt clears the previous failure so a successful retry never keeps a stale banner. */
+  const onMutate = () => setError(null);
   const onSettled = () => invalidate(qc);
-  const start = useMutation({ mutationFn: () => invoke('tasks.start', { taskId: task.id }), onSuccess: ({ sessions }) => sessions[0] && openSession(sessions[0].id), onError, onSettled });
-  const pause = useMutation({ mutationFn: () => invoke('tasks.pause', { taskId: task.id }), onError, onSettled });
-  const resume = useMutation({ mutationFn: () => invoke('tasks.resume', { taskId: task.id }), onError, onSettled });
-  const cancel = useMutation({ mutationFn: () => invoke('tasks.cancel', { taskId: task.id }), onError, onSettled });
+  const start = useMutation({ mutationFn: () => invoke('tasks.start', { taskId: task.id }), onSuccess: ({ sessions }) => sessions[0] && openSession(sessions[0].id), onMutate, onError, onSettled });
+  const pause = useMutation({ mutationFn: () => invoke('tasks.pause', { taskId: task.id }), onMutate, onError, onSettled });
+  const resume = useMutation({ mutationFn: () => invoke('tasks.resume', { taskId: task.id }), onMutate, onError, onSettled });
+  const cancel = useMutation({ mutationFn: () => invoke('tasks.cancel', { taskId: task.id }), onMutate, onError, onSettled });
   const subtasks = orderedSubtasks(task);
   const titleOf = (id: string) => task.subtasks.find((s) => s.id === id)?.title ?? id;
   const wtById = new Map((worktrees.data ?? []).map((w) => [w.id, w]));
