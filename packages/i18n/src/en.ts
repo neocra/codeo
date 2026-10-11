@@ -255,6 +255,7 @@ export const en: Record<MessageKey, string> = {
   'runtime.error.task.onlyRunningPause': 'Only a running task can be paused.',
   'runtime.error.task.onlyPausedResume': 'Only a paused task can be resumed.',
   'runtime.error.task.stopFailed': 'An agent could not be stopped — {details}. Retry the stop.',
+  'runtime.error.task.stopPending': 'An agent is still active ({steps}): retry the pause before resuming.',
   'runtime.error.task.closed': 'This task is closed: create a new task to continue.',
   'runtime.error.task.pausedSend': 'The task is paused: resume it to continue.',
   'runtime.error.task.failedSend': 'The task failed: restart it to rerun its steps.',

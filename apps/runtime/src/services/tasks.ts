@@ -251,8 +251,9 @@ export class TaskService {
       const attemptStartedAt = new Date().toISOString();
       const subtasks = task.subtasks.map((s) => (s.status === 'failed' || s.status === 'cancelled' ? { ...s, status: 'pending' as const, sessionId: null, error: null, attemptStartedAt } : s));
       task = await this.save(task, 'queued', { subtasks, startedAt: task.startedAt ?? new Date().toISOString() });
-      const { task: advanced, sessions, errors } = await this.advance(task);
-      if (!sessions.length && errors.length) throw new RuntimeError('PROVIDER_UNAVAILABLE', errors[0]!);
+      const { task: advanced, sessions, errors, firstError } = await this.advance(task);
+      /* The original error keeps its code and localization details (e.g. repo.noCommits, worktree.createFailed). */
+      if (!sessions.length && errors.length) throw firstError instanceof RuntimeError ? firstError : new RuntimeError('PROVIDER_UNAVAILABLE', errors[0]!);
       return { task: advanced, sessions };
     });
   }
@@ -287,6 +288,11 @@ export class TaskService {
     return this.locked(taskId, async () => {
       let task = await this.get(taskId);
       if (task.status !== 'paused') throw localizedError('CONFLICT', 'task.onlyPausedResume', undefined, 'Seule une tâche en pause peut être reprise.');
+      /* A pause that could not stop every agent leaves handles live: they must be stopped (retry the pause) before anything resumes. */
+      const stillLive = task.subtasks.filter((s) => s.sessionId && this.sessions.isLive(s.sessionId));
+      if (stillLive.length) {
+        throw localizedError('CONFLICT', 'task.stopPending', { steps: stillLive.map((s) => s.title).join(', ') }, `Un agent est encore actif (${stillLive.map((s) => s.title).join(', ')}) : réessayez la mise en pause avant de reprendre.`);
+      }
       task = await this.save(task, 'running');
       for (const sub of task.subtasks) {
         if (sub.status !== 'running' && sub.status !== 'waiting_approval') continue;
@@ -324,9 +330,10 @@ export class TaskService {
    * Cancels blocked subtasks, launches every runnable one, then derives and saves the task
    * status. Runs until the plan stops changing (a failed launch can block further steps).
    */
-  private async advance(task: Task, cause?: string): Promise<{ task: Task; sessions: AgentSession[]; errors: string[] }> {
+  private async advance(task: Task, cause?: string): Promise<{ task: Task; sessions: AgentSession[]; errors: string[]; firstError: unknown }> {
     const sessions: AgentSession[] = [];
     const errors: string[] = cause ? [cause] : [];
+    let firstError: unknown = null;
     for (;;) {
       for (const b of blockedSubtasks(task)) task = patchSubtask(task, b.id, { status: 'cancelled' });
       /* While shutting down nothing new starts: the task is paused at boot and resumed by the user. */
@@ -343,6 +350,7 @@ export class TaskService {
           const message = err instanceof Error ? err.message : String(err);
           this.log.warn('subtask launch failed', { taskId: task.id, subtaskId: sub.id, err: message });
           errors.push(message);
+          firstError ??= err;
           /* A session that got as far as existing is recorded, so the retry closes it before launching a replacement. */
           const startedSessionId = err instanceof RuntimeError && err.details && typeof err.details === 'object' && typeof (err.details as { sessionId?: unknown }).sessionId === 'string' ? (err.details as { sessionId: string }).sessionId : null;
           task = patchSubtask(task, sub.id, { status: 'failed', error: message, ...(startedSessionId ? { sessionId: startedSessionId } : {}) });
@@ -354,7 +362,7 @@ export class TaskService {
     /* A failure observed earlier (parallel mode) must still be reported when the task finally fails. */
     const failureCause = errors[0] ?? task.subtasks.find((s) => s.status === 'failed' && s.error)?.error ?? undefined;
     const saved = await this.save(task, status, { progress: status === 'review' ? 90 : taskProgress(task) }, failureCause);
-    return { task: saved, sessions, errors };
+    return { task: saved, sessions, errors, firstError };
   }
 
   private async launch(task: Task, sub: Subtask): Promise<{ session: AgentSession; worktree: Worktree | null }> {

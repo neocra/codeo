@@ -269,6 +269,7 @@ export const fr = {
   'runtime.error.task.onlyRunningPause': 'Seule une tâche en cours peut être mise en pause.',
   'runtime.error.task.onlyPausedResume': 'Seule une tâche en pause peut être reprise.',
   'runtime.error.task.stopFailed': 'Un agent n’a pas pu être arrêté — {details}. Réessayez l’arrêt.',
+  'runtime.error.task.stopPending': 'Un agent est encore actif ({steps}) : réessayez la mise en pause avant de reprendre.',
   'runtime.error.task.closed': 'Cette tâche est terminée : créez une nouvelle tâche pour continuer.',
   'runtime.error.task.pausedSend': 'La tâche est en pause : reprenez-la pour continuer.',
   'runtime.error.task.failedSend': 'La tâche est en échec : redémarrez-la pour relancer ses étapes.',

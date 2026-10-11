@@ -128,6 +128,8 @@ export class WorktreeService {
       }
       this.log.warn('adopting worktree left by an interrupted run', { path: target, branch });
     } else {
+      /* A registration left by a run that died before the row insert (directory since deleted) would block the reattach. */
+      await pruneWorktrees(repository.path);
       try {
         await createWorktree({ root: repository.path, path: target, branch, baseBranch });
         created = true;
