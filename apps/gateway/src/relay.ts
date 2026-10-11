@@ -467,7 +467,10 @@ export function createRelay(opts: RelayOptions): Relay {
   function disconnectDevice(deviceId: string, reason: string): void {
     for (const state of runtimes.values()) {
       for (const dev of state.devices.values()) {
-        if (dev.deviceId === deviceId) closeSocket(dev.socket, CLOSE_UNAUTHORIZED, reason);
+        if (dev.deviceId !== deviceId) continue;
+        /* Unregister now: the close handshake can take a while and a revoked device must not receive another frame. */
+        state.devices.delete(dev.connId);
+        closeSocket(dev.socket, CLOSE_UNAUTHORIZED, reason);
       }
     }
   }

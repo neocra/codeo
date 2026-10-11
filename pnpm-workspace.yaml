@@ -5,11 +5,12 @@ packages:
 # pnpm 11 reads its settings here (not from .npmrc).
 autoInstallPeers: true
 verifyDepsBeforeRun: false
-onlyBuiltDependencies:
-  - electron
-  - esbuild
-  - '@libsql/client'
-  - libsql
-  - '@anthropic-ai/claude-agent-sdk'
-  - '@openai/codex'
-  - '@swc/core'
+allowBuilds:
+  electron: true
+  esbuild: true
+  '@libsql/client': true
+  libsql: true
+  '@anthropic-ai/claude-agent-sdk': true
+  '@openai/codex': true
+  '@swc/core': true
+  electron-winstaller: true
