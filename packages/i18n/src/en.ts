@@ -247,6 +247,7 @@ export const en: Record<MessageKey, string> = {
   'runtime.error.plan.bestOfNMin': 'Best-of-N needs at least two agents.',
   'runtime.error.plan.parallelNeedsWorktree': 'Parallel agents must work in isolated worktrees.',
   'runtime.error.plan.dependsEarlier': 'A subtask can only depend on an earlier subtask.',
+  'runtime.error.plan.chainedOneRepository': 'Chained steps (sequential, pipeline) work in a single repository.',
   'runtime.error.plan.bestOfNIndependent': 'Best-of-N candidates are independent.',
   'runtime.error.task.noSubtasks': 'The task has no subtask.',
   'runtime.error.task.pausedResume': 'The task is paused: resume it.',

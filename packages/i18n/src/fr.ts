@@ -261,6 +261,7 @@ export const fr = {
   'runtime.error.plan.bestOfNMin': 'Best-of-N demande au moins deux agents.',
   'runtime.error.plan.parallelNeedsWorktree': 'Des agents en parallèle doivent travailler dans des worktrees isolés.',
   'runtime.error.plan.dependsEarlier': 'Une sous-tâche ne peut dépendre que d’une sous-tâche précédente.',
+  'runtime.error.plan.chainedOneRepository': 'Les étapes enchaînées (séquentiel, pipeline) travaillent dans un seul dépôt.',
   'runtime.error.plan.bestOfNIndependent': 'Les candidats Best-of-N sont indépendants.',
   'runtime.error.task.noSubtasks': 'La tâche n’a aucune sous-tâche.',
   'runtime.error.task.pausedResume': 'La tâche est en pause : reprenez-la.',

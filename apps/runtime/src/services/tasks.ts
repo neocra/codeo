@@ -149,8 +149,12 @@ export class TaskService {
   /** Persists the task, moving through the legal intermediate statuses when needed. */
   private async save(task: Task, status: TaskStatus, patch: Partial<Task> = {}, error?: string): Promise<Task> {
     const path = taskTransitionPath(task.status, status);
-    if (!path) this.log.warn('ignored task transition', { id: task.id, from: task.status, to: status });
-    const next = path ? status : task.status;
+    if (!path) {
+      /* No legal path: nothing is persisted or announced (a terminal task is never touched by a stray patch). */
+      this.log.warn('ignored task transition', { id: task.id, from: task.status, to: status });
+      return task;
+    }
+    const next = status;
     const updated: Task = { ...task, ...patch, status: next, updatedAt: new Date().toISOString() };
     await this.repo.upsert(updated);
     this.bus.publish('TaskUpdated', { task: updated });
@@ -204,6 +208,10 @@ export class TaskService {
         order: i,
       };
     });
+    /* Chained steps share one worktree, so they must live in one repository (lanes are keyed by repository). */
+    if (sharesWorktree(mode) && new Set(subtasks.map((s) => s.repositoryId)).size > 1) {
+      throw localizedError('INVALID_PARAMS', 'plan.chainedOneRepository', undefined, 'Les étapes enchaînées (séquentiel, pipeline) travaillent dans un seul dépôt.');
+    }
 
     const now = new Date().toISOString();
     const task: Task = {
