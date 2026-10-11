@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ClaudeCodeProvider } from '@codeo/agent-provider-claude-code';
 import { CodexProvider } from '@codeo/agent-provider-codex';
 import type { AgentProvider } from '@codeo/agent-provider-core';
-import { commands, RuntimeError, type CommandName, type CommandParsedParams, type CommandResult, type CommandScope, type RuntimeInfo } from '@codeo/contracts';
+import { commands, PROTOCOL_VERSION, RuntimeError, type CommandName, type CommandParsedParams, type CommandResult, type CommandScope, type RuntimeInfo } from '@codeo/contracts';
 import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, WorktreeRepo, type OpenedDatabase } from '@codeo/database';
 import type { Machine } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
@@ -87,7 +87,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
 
   const info: RuntimeInfo = {
     version: RUNTIME_VERSION,
-    protocolVersion: 1,
+    protocolVersion: PROTOCOL_VERSION,
     machine,
     dataDir: opts.dataDir,
     startedAt: new Date().toISOString(),

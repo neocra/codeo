@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '@codeo/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type WebSocket from 'ws';
 import {
@@ -24,7 +25,7 @@ let runtimeReader: Reader;
 
 const hello = (token: string, afterSeq = -1) => ({
   kind: 'hello',
-  protocolVersion: 1,
+  protocolVersion: PROTOCOL_VERSION,
   token,
   client: { name: 'test-mobile', version: '0.0.0', kind: 'mobile' },
   afterSeq,

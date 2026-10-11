@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PROTOCOL_VERSION } from './version';
 import {
   AgentProviderIdSchema,
   AgentRoleSchema,
@@ -44,7 +45,7 @@ export type RepositoryInspection = z.infer<typeof RepositoryInspectionSchema>;
 
 export const RuntimeInfoSchema = z.object({
   version: z.string(),
-  protocolVersion: z.literal(1),
+  protocolVersion: z.literal(PROTOCOL_VERSION),
   machine: MachineSchema,
   dataDir: z.string(),
   startedAt: z.string(),

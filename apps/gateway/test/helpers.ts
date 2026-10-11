@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '@codeo/contracts';
 import WebSocket from 'ws';
 import type { RuntimeInfo } from '@codeo/contracts';
 import { createLogger } from '@codeo/shared-utils';
@@ -79,7 +80,7 @@ export async function pairDevice(ctx: TestContext, runtimeSecret: string, name =
 
 export const sampleRuntimeInfo: RuntimeInfo = {
   version: '0.1.0',
-  protocolVersion: 1,
+  protocolVersion: PROTOCOL_VERSION,
   machine: { id: 'mach_test', name: 'test-mac', platform: 'darwin', runtimeVersion: '0.1.0', connection: 'gateway', status: 'connected' },
   dataDir: '/tmp/codeo-test',
   startedAt: '2026-01-01T00:00:00.000Z',

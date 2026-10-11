@@ -3,7 +3,9 @@ import { CommandNameSchema } from './commands';
 import { RuntimeInfoSchema } from './commands';
 import { SequencedEventSchema } from './events';
 
-export const PROTOCOL_VERSION = 1 as const;
+import { PROTOCOL_VERSION } from './version';
+
+export { PROTOCOL_VERSION };
 
 /* Client → Runtime */
 export const ClientMessageSchema = z.discriminatedUnion('kind', [

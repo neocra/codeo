@@ -50,7 +50,8 @@ class FakeProvider implements AgentProvider {
           opts.onEvent({ type: 'tool_call_started', toolUseId: 'tu1', tool: 'Edit', input: { file_path: '/x.ts' } });
           opts.onEvent({ type: 'tool_call_completed', toolUseId: 'tu1', output: decision.behavior, isError: decision.behavior === 'deny' });
         }
-        opts.onEvent({ type: 'turn_completed', ok: true, summary: 'ok', durationMs: 5, costUsd: 0, turns: 1 });
+        const failing = text.includes('fail-turn');
+        opts.onEvent({ type: 'turn_completed', ok: !failing, summary: failing ? 'quota épuisé' : 'ok', durationMs: 5, costUsd: 0, turns: 1 });
         })();
       },
       interrupt: async () => {},
@@ -315,6 +316,19 @@ describe('orchestration and worktrees', () => {
     /* The idle owner was closed with its worktree and cannot be resumed into a missing directory. */
     expect((await client.request('sessions.get', { sessionId: owner.id })).session.status).toBe('completed');
     await expect(client.request('sessions.send', { sessionId: owner.id, text: 'encore' })).rejects.toThrow(/n’existe plus/);
+  });
+
+  it('treats a failed provider turn as a failed step, not a completed one', async () => {
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Tour raté', provider: 'claude-code', orchestration: 'sequential',
+      subtasks: [agent({ title: 'Casse fail-turn', role: 'backend' }), agent({ title: 'Suite', role: 'qa' })],
+    });
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'failed');
+    const failed = await client.request('tasks.get', { taskId: task.id });
+    expect(failed.subtasks.map((s) => s.status)).toEqual(['failed', 'cancelled']);
+    expect(failed.subtasks[0]?.error).toContain('quota épuisé');
+    expect((await client.request('sessions.get', { sessionId: failed.subtasks[0]!.sessionId! })).session.status).toBe('failed');
   });
 
   it('refuses a send while another step works in the shared worktree, and once the task is closed', async () => {

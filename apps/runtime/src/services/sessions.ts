@@ -297,7 +297,10 @@ export class SessionService {
         }
         await this.append(session, live, { kind: 'result', ok: ev.ok, summary: ev.summary, durationMs: ev.durationMs, costUsd: ev.costUsd, turns: ev.turns });
         const fresh = await this.get(sessionId);
-        if (fresh.status === 'running' || fresh.status === 'waiting_approval') await this.setStatus(fresh, 'idle');
+        if (fresh.status === 'running' || fresh.status === 'waiting_approval') {
+          /* A turn the provider reports as failed (Codex turn.failed, Claude error_* results) is a failed session, not an idle one. */
+          await this.setStatus(fresh, ev.ok ? 'idle' : 'failed', ev.ok ? null : ev.summary || 'Le tour de l’agent a échoué.');
+        }
         return;
       }
       case 'error': {
