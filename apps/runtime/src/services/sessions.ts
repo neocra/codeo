@@ -239,10 +239,23 @@ export class SessionService {
       const failed = await this.setStatus(current, 'failed', err instanceof Error ? err.message : String(err));
       throw new RuntimeError('PROVIDER_UNAVAILABLE', failed.error ?? 'Échec du démarrage.');
     }
-    current = await this.setStatus(current, 'running');
-    await this.append(current, live, { kind: 'user_message', text: prompt });
-    await live.handle.send(prompt);
-    return current;
+    /* From here a provider process exists: any failure before the first turn is accepted must close it, so a
+       retry never finds a live but unrecorded agent in the worktree. */
+    try {
+      current = await this.setStatus(current, 'running');
+      await this.append(current, live, { kind: 'user_message', text: prompt });
+      await live.handle.send(prompt);
+      return current;
+    } catch (err) {
+      this.live.delete(sessionId);
+      this.approvals.cancelForSession(sessionId);
+      await live.handle.close().catch((e) => this.log.error('could not close partially started session', { sessionId, err: String(e) }));
+      const message = err instanceof Error ? err.message : String(err);
+      const latest = await this.get(sessionId);
+      const terminal = canTransitionSession(latest.status, 'failed') ? 'failed' : canTransitionSession(latest.status, 'completed') ? 'completed' : null;
+      if (terminal) await this.setStatus(latest, terminal, message);
+      throw err instanceof RuntimeError ? err : new RuntimeError('PROVIDER_UNAVAILABLE', message);
+    }
   }
 
   private async handleProviderEvent(sessionId: string, live: Live, ev: ProviderEvent): Promise<void> {

@@ -234,6 +234,7 @@ export const en: Record<MessageKey, string> = {
   'role.reviewer': 'Code review',
   'role.devops': 'DevOps',
   'role.developer': 'Implementation',
+  'runtime.error.disconnected': 'Runtime not connected.',
   'runtime.error.repo.unknown': 'Unknown repository: {id}',
   'runtime.error.repo.notGit': 'This folder is not a Git repository: {path}',
   'runtime.error.repo.duplicate': 'This repository is already in the workspace.',

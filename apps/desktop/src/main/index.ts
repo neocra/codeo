@@ -100,7 +100,7 @@ function registerIpc() {
   ipcMain.handle(IPC.invoke, async (_e, command: unknown, params: unknown) => {
     try {
       const name = CommandNameSchema.parse(command);
-      if (!client) throw new RuntimeError('INTERNAL', 'Runtime non connecté', { key: 'runtime.disconnected' });
+      if (!client) throw new RuntimeError('INTERNAL', 'Runtime non connecté', { key: 'disconnected' });
       /* Validate at the trust boundary even though the runtime validates again. */
       const parsed = commands[name].params.parse(params ?? {});
       return { ok: true, result: await client.request(name, parsed as never) };

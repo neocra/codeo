@@ -248,6 +248,7 @@ export const fr = {
   'role.devops': 'DevOps',
   'role.developer': 'Implémentation',
 
+  'runtime.error.disconnected': 'Runtime non connecté.',
   'runtime.error.repo.unknown': 'Dépôt inconnu : {id}',
   'runtime.error.repo.notGit': 'Ce dossier n’est pas un dépôt Git : {path}',
   'runtime.error.repo.duplicate': 'Ce dépôt est déjà dans l’espace de travail.',
