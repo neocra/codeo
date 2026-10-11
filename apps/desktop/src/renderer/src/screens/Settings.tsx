@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ProviderStatus } from '@codeo/domain';
-import { Banner, Button, Card, Choice, PageHeader, Placeholder, StatusPill } from '@codeo/ui-desktop';
-import type { RuntimeStatus } from '../../../shared/bridge-types';
+import { Banner, Button, Card, Choice, PageHeader, Placeholder, ProgressBar, StatusPill } from '@codeo/ui-desktop';
+import type { RuntimeStatus, UpdateStatus } from '../../../shared/bridge-types';
 import { codeo, invoke } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { keys, useProviders } from '../lib/queries';
@@ -57,6 +57,74 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
             </div>
           ) : null}
         </div>
+      </div>
+    </Card>
+  );
+}
+
+function UpdatesCard() {
+  const t = useT();
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void codeo.getUpdateStatus().then(setStatus);
+    return codeo.onUpdateStatus(setStatus);
+  }, []);
+  const run = async (fn: () => Promise<UpdateStatus>) => {
+    setBusy(true);
+    try {
+      setStatus(await fn());
+    } finally {
+      setBusy(false);
+    }
+  };
+  const state = status?.state ?? 'idle';
+  const tone = state === 'available' || state === 'ready' ? 'attention' : state === 'up-to-date' ? 'done' : state === 'error' ? 'error' : state === 'checking' || state === 'downloading' ? 'live' : 'idle';
+  const message =
+    state === 'checking' ? t('updates.checking')
+    : state === 'up-to-date' ? t('updates.upToDate')
+    : state === 'available' ? t('updates.available', { version: status?.availableVersion ?? '' })
+    : state === 'downloading' ? t('updates.downloading', { progress: status?.progress ?? 0 })
+    : state === 'ready' ? t('updates.ready')
+    : state === 'manual' ? t('updates.manual')
+    : state === 'unsupported' ? t('updates.unsupported')
+    : state === 'error' ? t('updates.error', { error: status?.error ?? '' })
+    : null;
+  return (
+    <Card title={t('updates.title')} icon="refresh">
+      <div className="cd-stack">
+        <div className="cd-row-gap">
+          <span className="cd-muted cd-body-sm">{t('updates.current')}</span>
+          <span className="cd-key">{status?.currentVersion ?? codeo.appVersion}</span>
+          {state !== 'idle' ? (
+            <StatusPill key={state} tone={tone}>
+              {status?.availableVersion && (state === 'available' || state === 'downloading' || state === 'ready') ? `v${status.availableVersion}` : state}
+            </StatusPill>
+          ) : null}
+        </div>
+        {message ? <div className={state === 'error' ? 'cd-field__error' : 'cd-body-sm cd-muted'}>{message}</div> : null}
+        {state === 'downloading' ? <ProgressBar value={status?.progress ?? 0} running tone="sky" /> : null}
+        <div className="cd-row-gap">
+          <Button variant="secondary" icon="refresh" loading={state === 'checking'} disabled={busy || state === 'downloading'} onClick={() => void run(() => codeo.checkForUpdates())}>
+            {t('updates.check')}
+          </Button>
+          {state === 'available' ? (
+            <Button variant="primary" icon="play" loading={busy} onClick={() => void run(() => codeo.installUpdate())}>
+              {t('updates.install')}
+            </Button>
+          ) : null}
+          {state === 'ready' ? (
+            <Button variant="primary" icon="play" onClick={() => void run(() => codeo.installUpdate())}>
+              {t('updates.restart')}
+            </Button>
+          ) : null}
+          {state === 'manual' || state === 'error' ? (
+            <Button variant="secondary" icon="external" onClick={() => void codeo.openReleasePage()}>
+              {t('updates.download')}
+            </Button>
+          ) : null}
+        </div>
+        <div className="cd-body-sm cd-faint">{t('updates.source')}</div>
       </div>
     </Card>
   );
@@ -148,6 +216,7 @@ export function SettingsScreen() {
             </div>
           </Card>
         </div>
+        <UpdatesCard />
       </div>
     </>
   );

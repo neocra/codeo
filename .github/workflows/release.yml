@@ -1,0 +1,55 @@
+name: Release
+# Cutting a GitHub release (tag vX.Y.Z) builds Codeo Desktop for macOS, Windows and Linux and
+# uploads the installers plus the electron-updater manifests (latest*.yml) to that release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to build and upload to (e.g. v0.2.0)'
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, name: macOS, target: mac, assets: 'release/*.dmg release/*.zip release/latest-mac.yml' }
+          - { os: windows-latest, name: Windows, target: win, assets: 'release/*.exe release/*.blockmap release/latest.yml' }
+          - { os: ubuntu-latest, name: Linux, target: linux, assets: 'release/*.AppImage release/*.deb release/latest-linux.yml' }
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      # No signing identity in CI unless secrets are configured: builds are unsigned (see docs/development/releases.md).
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - name: Install Linux packaging tools
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libarchive-tools rpm fakeroot dpkg
+      - run: pnpm install --frozen-lockfile
+      - name: Set app version from tag
+        run: node apps/desktop/scripts/set-version.mjs "$TAG"
+        shell: bash
+      - name: Build and package
+        run: pnpm --filter @codeo/desktop package:${{ matrix.target }}
+      - name: Upload assets to the release
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          ls -la release
+          gh release upload "$TAG" ${{ matrix.assets }} --repo "${{ github.repository }}" --clobber

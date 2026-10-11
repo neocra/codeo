@@ -3,7 +3,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/out/**', '**/release/**', '**/.expo/**', '**/migrations/**', '**/coverage/**'] },
+  { ignores: ['**/node_modules/**', '**/dist/**', '**/out/**', '**/release/**', '**/.expo/**', '**/migrations/**', '**/coverage/**', '**/runtime-bundle/**', '**/release/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -21,6 +21,10 @@ export default tseslint.config(
     },
   },
   { files: ['**/scripts/**', '**/*.config.{js,ts}', 'apps/runtime/src/main.ts'], rules: { 'no-console': 'off' } },
+  {
+    files: ['**/*.mjs', '**/scripts/**/*.js'],
+    languageOptions: { sourceType: 'module', globals: { process: 'readonly', console: 'readonly', URL: 'readonly' } },
+  },
   {
     files: ['**/*.config.js', '**/*.config.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: { module: 'writable', require: 'readonly', __dirname: 'readonly', process: 'readonly' } },

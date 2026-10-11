@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@codeo/contracts', '@codeo/domain', '@codeo/i18n', '@codeo/remote-client', '@codeo/shared-utils'] })],
+    /* Only `dependencies` (electron-updater) stay external; everything else — workspace packages, ws, zod — is bundled. */
+    plugins: [externalizeDepsPlugin()],
     build: { rollupOptions: { output: { format: 'es' } } },
   },
   preload: {
