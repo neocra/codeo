@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { SessionEntry } from '@codeo/domain';
 import { AgentMessage, Avatar, Button, Icon, StatusPill, Textarea } from '@codeo/ui-desktop';
-import { invoke } from '../lib/api';
+import { describeError, invoke } from '../lib/api';
 import { formatRelative, useT } from '../lib/i18n';
 import { keys, usePendingApprovals, useSession } from '../lib/queries';
 import { ApprovalItem } from './ApprovalItem';
@@ -152,7 +152,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
         {sessionApprovals.map((a) => (
           <ApprovalItem key={a.id} approval={a} />
         ))}
-        {send.isError ? <div className="cd-sysmsg cd-sysmsg--error">{String(send.error)}</div> : null}
+        {send.isError ? <div className="cd-sysmsg cd-sysmsg--error">{describeError(send.error, t)}</div> : null}
       </div>
       <form
         className="cd-session__composer"

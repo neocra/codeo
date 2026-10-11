@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { orderedSubtasks, type Task, type Worktree } from '@codeo/domain';
 import { Banner, Button, Card, Icon, StatusPill } from '@codeo/ui-desktop';
-import { invoke } from '../lib/api';
+import { invoke, describeError } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { useWorktrees } from '../lib/queries';
 import { useUi } from '../lib/store';
@@ -20,7 +20,7 @@ export function TaskDetail({ task }: { task: Task }) {
   const openSession = useUi((s) => s.openSession);
   const worktrees = useWorktrees(task.id);
   const [error, setError] = useState<string | null>(null);
-  const onError = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
+  const onError = (e: unknown) => setError(describeError(e, t));
   const onSettled = () => invalidate(qc);
   const start = useMutation({ mutationFn: () => invoke('tasks.start', { taskId: task.id }), onSuccess: ({ sessions }) => sessions[0] && openSession(sessions[0].id), onError, onSettled });
   const pause = useMutation({ mutationFn: () => invoke('tasks.pause', { taskId: task.id }), onError, onSettled });
@@ -116,7 +116,7 @@ function WorktreeRow({ worktree, busy }: { worktree: Worktree; busy: boolean }) 
     mutationFn: (force: boolean) => invoke('worktrees.remove', { worktreeId: worktree.id, force }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['worktrees'] }),
     onError: (e) => {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeError(e, t));
       /* The dirty flag is a snapshot: refresh it so the next click offers the forced confirmation. */
       void qc.invalidateQueries({ queryKey: ['worktrees'] });
     },

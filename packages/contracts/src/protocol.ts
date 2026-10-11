@@ -65,3 +65,18 @@ export class RuntimeError extends Error {
     this.name = 'RuntimeError';
   }
 }
+
+/** Stable identifier carried in `details` so clients can translate the error; `message` stays the French fallback. */
+export interface LocalizedErrorDetails {
+  key: string;
+  params?: Record<string, string | number>;
+}
+
+export function localizedError(code: ErrorCode, key: string, params: Record<string, string | number> | undefined, message: string): RuntimeError {
+  return new RuntimeError(code, message, { key, ...(params ? { params } : {}) } satisfies LocalizedErrorDetails);
+}
+
+export function localizedErrorDetails(details: unknown): LocalizedErrorDetails | null {
+  if (!details || typeof details !== 'object' || typeof (details as { key?: unknown }).key !== 'string') return null;
+  return details as LocalizedErrorDetails;
+}

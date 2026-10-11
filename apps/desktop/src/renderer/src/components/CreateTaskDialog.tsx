@@ -4,7 +4,7 @@ import type { SubtaskPlan } from '@codeo/contracts';
 import type { AgentProviderId, AgentRole, OrchestrationMode } from '@codeo/domain';
 import { Button, Card, Choice, Dialog, Field, Input, Placeholder, Select, Textarea } from '@codeo/ui-desktop';
 import type { MessageKey } from '@codeo/i18n';
-import { invoke } from '../lib/api';
+import { invoke, describeError } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { useProviders, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
@@ -107,7 +107,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
       onClose();
       if (session) openSession(session.id);
     },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => setError(describeError(e, t)),
   });
 
   const reset = () => {

@@ -1,4 +1,7 @@
-import type { CommandName, CommandParams, CommandResult, RuntimeEvent, RuntimeInfo } from '@codeo/contracts';
+import type { CommandName, CommandParams, CommandResult, ErrorCode, RuntimeEvent, RuntimeInfo } from '@codeo/contracts';
+
+/** IPC cannot carry Error subclasses, so command failures travel as data and are rethrown in the renderer. */
+export type InvokeOutcome<T> = { ok: true; result: T } | { ok: false; error: { code: ErrorCode; message: string; details?: unknown } };
 
 export type RuntimeConnectionState = 'starting' | 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'closed';
 
@@ -12,7 +15,7 @@ export interface RuntimeStatus {
 export interface CodeoBridge {
   platform: 'darwin' | 'win32' | 'linux' | (string & {});
   appVersion: string;
-  invoke<C extends CommandName>(command: C, params: CommandParams<C>): Promise<CommandResult<C>>;
+  invoke<C extends CommandName>(command: C, params: CommandParams<C>): Promise<InvokeOutcome<CommandResult<C>>>;
   onEvent(listener: (payload: { seq: number; event: RuntimeEvent }) => void): () => void;
   onRuntimeStatus(listener: (status: RuntimeStatus) => void): () => void;
   getRuntimeStatus(): Promise<RuntimeStatus>;

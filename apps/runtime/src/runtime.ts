@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ClaudeCodeProvider } from '@codeo/agent-provider-claude-code';
 import { CodexProvider } from '@codeo/agent-provider-codex';
 import type { AgentProvider } from '@codeo/agent-provider-core';
-import { commands, PROTOCOL_VERSION, RuntimeError, type CommandName, type CommandParsedParams, type CommandResult, type CommandScope, type RuntimeInfo } from '@codeo/contracts';
+import { commands, localizedError, PROTOCOL_VERSION, RuntimeError, type CommandName, type CommandParsedParams, type CommandResult, type CommandScope, type RuntimeInfo } from '@codeo/contracts';
 import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, WorktreeRepo, type OpenedDatabase } from '@codeo/database';
 import type { Machine } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
@@ -103,7 +103,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   async function assertNoWorktrees(workspaceId: string, repositoryId?: string): Promise<void> {
     const existing = (await worktrees.list({ workspaceId })).filter((w) => !repositoryId || w.repositoryId === repositoryId);
     if (existing.length) {
-      throw new RuntimeError('CONFLICT', `Supprimez d’abord les ${existing.length} worktree(s) associés (${existing.map((w) => w.branch).join(', ')}).`);
+      throw localizedError('CONFLICT', 'workspace.hasWorktrees', { count: existing.length, branches: existing.map((w) => w.branch).join(', ') }, `Supprimez d’abord les ${existing.length} worktree(s) associés (${existing.map((w) => w.branch).join(', ')}).`);
     }
   }
 
@@ -140,7 +140,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
         /* A working agent keeps its worktree; idle sessions are closed with it (they cannot resume without the directory). */
         const owners = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => (s.worktreeId === wt.id || laneKey(s.cwd) === laneKey(wt.path)) && sessions.isLive(s.id));
         if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
-          throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
+          throw localizedError('CONFLICT', 'worktree.agentBusy', undefined, 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
         }
         const removed = await worktrees.remove(p.worktreeId, {
           force: p.force,

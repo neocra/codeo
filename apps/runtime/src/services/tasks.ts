@@ -1,4 +1,4 @@
-import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
+import { localizedError, RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { TaskRepo } from '@codeo/database';
 import {
   aggregateTaskStatus,
@@ -89,10 +89,20 @@ export class TaskService {
 
   /** A session started for a subtask but never recorded on it (crash between launch and save) is reattached, never duplicated. */
   private async reconcileAssignments(task: Task): Promise<Task> {
-    if (task.subtasks.every((s) => s.sessionId)) return task;
     const sessions = await this.sessions.list({ taskId: task.id });
     let changed = false;
     for (const sub of task.subtasks) {
+      /* Assigned and still active in the row: the session's persisted outcome may be newer (crash before the listener saved it). */
+      if (sub.sessionId && (sub.status === 'running' || sub.status === 'waiting_approval')) {
+        const current = sessions.find((s) => s.id === sub.sessionId);
+        const outcome = current && current.status !== 'disconnected' && current.status !== 'created' ? SUBTASK_STATUS_FROM_SESSION[current.status] : undefined;
+        if (current && outcome && outcome !== sub.status && outcome !== 'running' && outcome !== 'waiting_approval') {
+          this.log.warn('subtask outcome recovered from its session', { taskId: task.id, subtaskId: sub.id, outcome });
+          task = patchSubtask(task, sub.id, { status: outcome, error: outcome === 'failed' ? (current.error ?? sub.error) : sub.error });
+          changed = true;
+        }
+        continue;
+      }
       if (sub.sessionId) continue;
       /* Only a session of the current attempt counts: a retry detached the older ones on purpose. */
       const orphan = sessions.find((s) => s.subtaskId === sub.id && (!sub.attemptStartedAt || s.createdAt >= sub.attemptStartedAt));
@@ -153,7 +163,7 @@ export class TaskService {
   async create(input: CommandParsedParams<'tasks.create'>): Promise<Task> {
     const ws = await this.workspaces.get(input.workspaceId);
     const known = (id: string) => ws.repositories.some((r) => r.id === id);
-    for (const id of input.repositoryIds) if (!known(id)) throw new RuntimeError('INVALID_PARAMS', `Dépôt inconnu: ${id}`);
+    for (const id of input.repositoryIds) if (!known(id)) throw localizedError('INVALID_PARAMS', 'repo.unknown', { id }, `Dépôt inconnu: ${id}`);
     const mode = input.orchestration;
     const title = input.title.trim();
     const objective = input.objective.trim();
@@ -161,19 +171,19 @@ export class TaskService {
       ? input.subtasks
       : [{ title: '', instructions: '', provider: input.provider, role: input.role, model: input.model, repositoryId: null, dependsOn: [] }];
 
-    if (mode === 'single' && plans.length !== 1) throw new RuntimeError('INVALID_PARAMS', 'Le mode simple utilise exactement un agent.');
-    if (mode === 'best-of-n' && plans.length < 2) throw new RuntimeError('INVALID_PARAMS', 'Best-of-N demande au moins deux agents.');
+    if (mode === 'single' && plans.length !== 1) throw localizedError('INVALID_PARAMS', 'plan.singleOneAgent', undefined, 'Le mode simple utilise exactement un agent.');
+    if (mode === 'best-of-n' && plans.length < 2) throw localizedError('INVALID_PARAMS', 'plan.bestOfNMin', undefined, 'Best-of-N demande au moins deux agents.');
     if ((mode === 'parallel' || mode === 'best-of-n') && input.isolation !== 'worktree') {
-      throw new RuntimeError('INVALID_PARAMS', 'Des agents en parallèle doivent travailler dans des worktrees isolés.');
+      throw localizedError('INVALID_PARAMS', 'plan.parallelNeedsWorktree', undefined, 'Des agents en parallèle doivent travailler dans des worktrees isolés.');
     }
 
     const repositoryIds = input.repositoryIds.length ? [...input.repositoryIds] : ws.repositories.slice(0, 1).map((r) => r.id);
     const taskId = newId('task');
     const subIds = plans.map(() => newId('sub'));
     const subtasks: Subtask[] = plans.map((p, i) => {
-      if (p.repositoryId && !known(p.repositoryId)) throw new RuntimeError('INVALID_PARAMS', `Dépôt inconnu: ${p.repositoryId}`);
-      if (p.dependsOn.some((d) => d >= i)) throw new RuntimeError('INVALID_PARAMS', 'Une sous-tâche ne peut dépendre que d’une sous-tâche précédente.');
-      if (mode === 'best-of-n' && p.dependsOn.length) throw new RuntimeError('INVALID_PARAMS', 'Les candidats Best-of-N sont indépendants.');
+      if (p.repositoryId && !known(p.repositoryId)) throw localizedError('INVALID_PARAMS', 'repo.unknown', { id: p.repositoryId }, `Dépôt inconnu: ${p.repositoryId}`);
+      if (p.dependsOn.some((d) => d >= i)) throw localizedError('INVALID_PARAMS', 'plan.dependsEarlier', undefined, 'Une sous-tâche ne peut dépendre que d’une sous-tâche précédente.');
+      if (mode === 'best-of-n' && p.dependsOn.length) throw localizedError('INVALID_PARAMS', 'plan.bestOfNIndependent', undefined, 'Les candidats Best-of-N sont indépendants.');
       const repositoryId = p.repositoryId ?? repositoryIds[0] ?? null;
       if (repositoryId && !repositoryIds.includes(repositoryId)) repositoryIds.push(repositoryId);
       /* Best-of-N candidates all attempt the same objective. */
@@ -223,9 +233,9 @@ export class TaskService {
   start(taskId: string): Promise<{ task: Task; sessions: AgentSession[] }> {
     return this.locked(taskId, async () => {
       let task = await this.get(taskId);
-      if (!task.subtasks.length) throw new RuntimeError('INVALID_PARAMS', 'La tâche n’a aucune sous-tâche.');
+      if (!task.subtasks.length) throw localizedError('INVALID_PARAMS', 'task.noSubtasks', undefined, 'La tâche n’a aucune sous-tâche.');
       if (task.status !== 'draft' && task.status !== 'failed') {
-        throw new RuntimeError('CONFLICT', task.status === 'paused' ? 'La tâche est en pause : reprenez-la.' : 'La tâche est déjà démarrée.');
+        throw task.status === 'paused' ? localizedError('CONFLICT', 'task.pausedResume', undefined, 'La tâche est en pause : reprenez-la.') : localizedError('CONFLICT', 'task.alreadyStarted', undefined, 'La tâche est déjà démarrée.');
       }
       /* Replaced sessions are closed first so an old provider handle cannot keep working beside the retry. */
       for (const s of task.subtasks) {
@@ -234,7 +244,7 @@ export class TaskService {
             await this.sessions.cancel(s.sessionId, { fromScheduler: true });
           } catch (err) {
             /* No replacement while the old agent may still hold the worktree. */
-            throw new RuntimeError('CONFLICT', `Impossible de fermer l’ancienne session de « ${s.title} » : ${err instanceof Error ? err.message : String(err)}. Réessayez.`);
+            throw localizedError('CONFLICT', 'task.replacedSessionClose', { step: s.title, reason: err instanceof Error ? err.message : String(err) }, `Impossible de fermer l’ancienne session de « ${s.title} » : ${err instanceof Error ? err.message : String(err)}. Réessayez.`);
           }
         }
       }
@@ -265,7 +275,7 @@ export class TaskService {
     return this.locked(taskId, async () => {
       const task = await this.get(taskId);
       const retryingStop = task.status === 'paused' && task.subtasks.some((s) => s.sessionId && this.sessions.isLive(s.sessionId));
-      if (!retryingStop && !['queued', 'running', 'waiting_approval'].includes(task.status)) throw new RuntimeError('CONFLICT', 'Seule une tâche en cours peut être mise en pause.');
+      if (!retryingStop && !['queued', 'running', 'waiting_approval'].includes(task.status)) throw localizedError('CONFLICT', 'task.onlyRunningPause', undefined, 'Seule une tâche en cours peut être mise en pause.');
       const updated = await this.save(task, 'paused');
       /* If an agent could not be stopped the error surfaces; the task stays paused so `pause` can be retried. */
       await this.stopSessions(task);
@@ -276,7 +286,7 @@ export class TaskService {
   resume(taskId: string): Promise<Task> {
     return this.locked(taskId, async () => {
       let task = await this.get(taskId);
-      if (task.status !== 'paused') throw new RuntimeError('CONFLICT', 'Seule une tâche en pause peut être reprise.');
+      if (task.status !== 'paused') throw localizedError('CONFLICT', 'task.onlyPausedResume', undefined, 'Seule une tâche en pause peut être reprise.');
       task = await this.save(task, 'running');
       for (const sub of task.subtasks) {
         if (sub.status !== 'running' && sub.status !== 'waiting_approval') continue;
@@ -307,7 +317,7 @@ export class TaskService {
         failures.push(`${s.title} : ${message}`);
       }
     }
-    if (failures.length) throw new RuntimeError('INTERNAL', `Un agent n’a pas pu être arrêté — ${failures.join(' ; ')}. Réessayez l’arrêt.`);
+    if (failures.length) throw localizedError('INTERNAL', 'task.stopFailed', { details: failures.join(' ; ') }, `Un agent n’a pas pu être arrêté — ${failures.join(' ; ')}. Réessayez l’arrêt.`);
   }
 
   /**
@@ -438,18 +448,23 @@ export class TaskService {
     if (!task) return;
     const sub = task.subtasks.find((s) => s.sessionId === session.id);
     /* A session the scheduler replaced (retry) must never run again beside its replacement. */
-    if (!sub) throw new RuntimeError('CONFLICT', 'Cette session a été remplacée par une nouvelle tentative : ouvrez la session actuelle de l’étape.');
+    if (!sub) throw localizedError('CONFLICT', 'session.replaced', undefined, 'Cette session a été remplacée par une nouvelle tentative : ouvrez la session actuelle de l’étape.');
     if (task.status === 'completed' || task.status === 'cancelled') {
-      throw new RuntimeError('CONFLICT', 'Cette tâche est terminée : créez une nouvelle tâche pour continuer.');
+      throw localizedError('CONFLICT', 'task.closed', undefined, 'Cette tâche est terminée : créez une nouvelle tâche pour continuer.');
     }
-    if (task.status === 'paused') throw new RuntimeError('CONFLICT', 'La tâche est en pause : reprenez-la pour continuer.');
-    if (task.status === 'failed') throw new RuntimeError('CONFLICT', 'La tâche est en échec : redémarrez-la pour relancer ses étapes.');
-    if (task.status === 'draft') throw new RuntimeError('CONFLICT', 'La tâche n’est pas démarrée.');
+    if (task.status === 'paused') throw localizedError('CONFLICT', 'task.pausedSend', undefined, 'La tâche est en pause : reprenez-la pour continuer.');
+    if (task.status === 'failed') throw localizedError('CONFLICT', 'task.failedSend', undefined, 'La tâche est en échec : redémarrez-la pour relancer ses étapes.');
+    if (task.status === 'draft') throw localizedError('CONFLICT', 'task.draftSend', undefined, 'La tâche n’est pas démarrée.');
     const occupied = task.subtasks.find(
       (o) => o.id !== sub.id && (o.status === 'running' || o.status === 'waiting_approval') && (sharesWorktree(task.orchestration) || (o.worktreeId !== null && o.worktreeId === sub.worktreeId)),
     );
     if (occupied) {
-      throw new RuntimeError('CONFLICT', `L’étape « ${occupied.title} » travaille déjà dans ce worktree : attendez qu’elle termine.`);
+      throw localizedError('CONFLICT', 'lane.occupied', { step: occupied.title }, `L’étape « ${occupied.title} » travaille déjà dans ce worktree : attendez qu’elle termine.`);
+    }
+    /* Changing an earlier step after its dependents ran would leave their results and handoffs stale. */
+    const dependent = task.subtasks.find((o) => o.id !== sub.id && subtaskDependencies(task, o).includes(sub.id) && o.status !== 'pending' && o.status !== 'cancelled');
+    if (dependent) {
+      throw localizedError('CONFLICT', 'lane.dependentsDone', { step: dependent.title }, `L’étape « ${dependent.title} » s’appuie déjà sur ce travail : redémarrez la tâche pour relancer la chaîne.`);
     }
   }
 

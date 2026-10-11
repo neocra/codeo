@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { RuntimeError } from '@codeo/contracts';
+import { localizedError, RuntimeError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
 import { createWorktree, isDirty, listWorktrees, pruneWorktrees, removeWorktree, resolveCommit } from '@codeo/git';
@@ -66,7 +66,7 @@ export class WorktreeService {
     if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${worktree.repositoryId}`);
     const registered = await this.registeredWorktree(repository.path, worktree.path);
     if (!registered || registered.branch !== worktree.branch) {
-      throw new RuntimeError('CONFLICT', `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : la session ne peut pas y reprendre.`);
+      throw localizedError('CONFLICT', 'worktree.notLaneResume', { path: worktree.path, branch: worktree.branch }, `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : la session ne peut pas y reprendre.`);
     }
     return worktree;
   }
@@ -87,7 +87,7 @@ export class WorktreeService {
     for (const ref of [repository.defaultBranch, `origin/${repository.defaultBranch}`, 'HEAD']) {
       if (await resolveCommit(repository.path, ref)) return ref;
     }
-    throw new RuntimeError('CONFLICT', `Le dépôt ${repository.name} n’a encore aucun commit : impossible de créer un worktree isolé.`);
+    throw localizedError('CONFLICT', 'repo.noCommits', { repo: repository.name }, `Le dépôt ${repository.name} n’a encore aucun commit : impossible de créer un worktree isolé.`);
   }
 
   /** The worktree a subtask works in: shared by the task's steps, or its own in parallel modes. Reused when it still exists. */
@@ -105,7 +105,7 @@ export class WorktreeService {
       /* Reuse only a directory git still knows as this lane's worktree on its branch; anything else is foreign. */
       const registered = await this.registeredWorktree(repository.path, existing.path);
       if (registered?.branch === existing.branch) return existing;
-      throw new RuntimeError('CONFLICT', `Le dossier ${existing.path} n’est plus le worktree ${existing.branch} (${registered ? `branche ${registered.branch ?? '?'}` : 'non enregistré dans git'}) : déplacez-le ou supprimez-le.`);
+      throw localizedError('CONFLICT', 'worktree.notLane', { path: existing.path, branch: existing.branch }, `Le dossier ${existing.path} n’est plus le worktree ${existing.branch} (${registered ? `branche ${registered.branch ?? '?'}` : 'non enregistré dans git'}) : déplacez-le ou supprimez-le.`);
     }
     if (existing) {
       /* Directory deleted outside Codeo: forget it and clear git's stale registration; the branch is reattached below. */
@@ -124,7 +124,7 @@ export class WorktreeService {
     if (existsSync(target)) {
       const registered = await this.registeredWorktree(repository.path, target);
       if (!registered || registered.branch !== branch) {
-        throw new RuntimeError('CONFLICT', `Le dossier ${target} existe déjà et n’est pas le worktree attendu (${branch}) : déplacez-le ou supprimez-le.`);
+        throw localizedError('CONFLICT', 'worktree.foreignTarget', { path: target, branch }, `Le dossier ${target} existe déjà et n’est pas le worktree attendu (${branch}) : déplacez-le ou supprimez-le.`);
       }
       this.log.warn('adopting worktree left by an interrupted run', { path: target, branch });
     } else {
@@ -132,7 +132,7 @@ export class WorktreeService {
         await createWorktree({ root: repository.path, path: target, branch, baseBranch });
         created = true;
       } catch (err) {
-        throw new RuntimeError('CONFLICT', `Impossible de créer le worktree ${branch} : ${err instanceof Error ? err.message : String(err)}`);
+        throw localizedError('CONFLICT', 'worktree.createFailed', { branch, reason: err instanceof Error ? err.message : String(err) }, `Impossible de créer le worktree ${branch} : ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     const worktree: Worktree = {
@@ -168,10 +168,10 @@ export class WorktreeService {
       /* Only what git knows as this lane's worktree on its branch is ever removed; a replaced directory is foreign. */
       const registered = await this.registeredWorktree(repository.path, worktree.path);
       if (!registered || registered.branch !== worktree.branch) {
-        throw new RuntimeError('CONFLICT', `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : Codeo n’y touche pas. Retirez-le manuellement puis supprimez cette entrée.`);
+        throw localizedError('CONFLICT', 'worktree.notLaneRemove', { path: worktree.path, branch: worktree.branch }, `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : Codeo n’y touche pas. Retirez-le manuellement puis supprimez cette entrée.`);
       }
       if (!opts.force && (await isDirty(worktree.path).catch(() => false))) {
-        throw new RuntimeError('CONFLICT', 'Ce worktree contient des modifications non commitées. Confirmez la suppression forcée pour les abandonner.');
+        throw localizedError('CONFLICT', 'worktree.dirty', undefined, 'Ce worktree contient des modifications non commitées. Confirmez la suppression forcée pour les abandonner.');
       }
       await opts.beforeRemove?.();
       await removeWorktree(repository.path, worktree.path, { force: opts.force });

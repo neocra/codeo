@@ -1,5 +1,5 @@
 import { roleInstructions, type ProviderEvent, type ProviderSessionHandle } from '@codeo/agent-provider-core';
-import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
+import { localizedError, RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { SessionRepo } from '@codeo/database';
 import { canTransitionSession, sessionTransition, type AgentSession, type SessionEntry, type SessionStatus, type Workspace } from '@codeo/domain';
 import { existsSync } from 'node:fs';
@@ -146,7 +146,7 @@ export class SessionService {
       return r.path;
     }
     const first = ws.repositories[0];
-    if (!first) throw new RuntimeError('INVALID_PARAMS', 'L’espace de travail n’a aucun dépôt.');
+    if (!first) throw localizedError('INVALID_PARAMS', 'workspace.noRepository', undefined, 'L’espace de travail n’a aucun dépôt.');
     return first.path;
   }
 
@@ -186,7 +186,7 @@ export class SessionService {
          pick one the state machine allows from here (idle → completed, created/disconnected → failed). */
       const terminal = canTransitionSession(session.status, 'completed') ? 'completed' : canTransitionSession(session.status, 'failed') ? 'failed' : null;
       if (terminal) await this.setStatus(session, terminal, message);
-      throw new RuntimeError('CONFLICT', message);
+      throw localizedError('CONFLICT', 'session.dirGone', { path: session.cwd }, message);
     }
     if (session.worktreeId && this.worktreeValidator) {
       try {
@@ -199,7 +199,7 @@ export class SessionService {
         throw err instanceof RuntimeError ? err : new RuntimeError('CONFLICT', message);
       }
     }
-    if (this.closed) throw new RuntimeError('CONFLICT', 'Le runtime s’arrête : aucune session ne peut démarrer.');
+    if (this.closed) throw localizedError('CONFLICT', 'runtime.stopping', undefined, 'Le runtime s’arrête : aucune session ne peut démarrer.');
     const provider = this.providers.get(session.provider);
     const status = this.providers.status(session.provider);
     if (!status?.installed) {
@@ -353,10 +353,10 @@ export class SessionService {
     const live = this.live.get(sessionId);
     if (!live) {
       /* Reopened session: resume the provider conversation with the stored provider session id. */
-      if (!session.providerSessionId) throw new RuntimeError('CONFLICT', 'Cette session ne peut pas être reprise (aucun identifiant fournisseur).');
+      if (!session.providerSessionId) throw localizedError('CONFLICT', 'session.noProviderId', undefined, 'Cette session ne peut pas être reprise (aucun identifiant fournisseur).');
       return this.launch(session, text);
     }
-    if (session.status === 'waiting_approval') throw new RuntimeError('CONFLICT', 'Répondez d’abord à la demande d’approbation.');
+    if (session.status === 'waiting_approval') throw localizedError('CONFLICT', 'session.awaitingApproval', undefined, 'Répondez d’abord à la demande d’approbation.');
     session = await this.serialize(live, async () => {
       const s = await this.setStatus(await this.get(sessionId), 'running');
       await this.append(s, live, { kind: 'user_message', text });
@@ -406,7 +406,7 @@ export class SessionService {
     const live = this.live.get(sessionId);
     if (!live) return session;
     if (session.status === 'running' || session.status === 'waiting_approval') {
-      throw new RuntimeError('CONFLICT', 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
+      throw localizedError('CONFLICT', 'session.agentBusy', undefined, 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
     }
     await live.handle.close();
     this.live.delete(sessionId);
@@ -421,6 +421,8 @@ export class SessionService {
   async shutdown(): Promise<void> {
     for (const [id, live] of this.live) {
       await live.handle.close().catch((err) => this.log.warn('provider close failed at shutdown', { id, err: String(err) }));
+      /* Events the adapter emitted before closing are still queued on the chain: let them land before the status flips. */
+      await live.chain.catch(() => undefined);
       this.live.delete(id);
       const s = await this.repo.get(id);
       if (s) await this.setStatus(s, 'disconnected', 'Runtime arrêté.');

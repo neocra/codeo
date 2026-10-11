@@ -4,7 +4,7 @@ import type { AgentProviderId, AgentRole } from '@codeo/domain';
 import { Avatar, Button, Dialog, EmptyState, Field, Select, StatusPill, Tabs, Textarea } from '@codeo/ui-desktop';
 import { SessionView } from '../components/SessionView';
 import { providerName, sessionTone } from '../components/status';
-import { invoke } from '../lib/api';
+import { invoke, describeError } from '../lib/api';
 import { formatRelative, useT } from '../lib/i18n';
 import { useProviders, useSessions, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
@@ -31,7 +31,7 @@ function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => voi
       onClose();
       openSession(s.id);
     },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => setError(describeError(e, t)),
   });
   const valid = Boolean(ws) && prompt.trim().length > 0 && (providers.data ?? []).some((p) => p.provider === provider && p.installed);
   return (
