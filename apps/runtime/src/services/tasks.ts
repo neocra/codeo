@@ -218,6 +218,12 @@ export class TaskService {
       if (task.status !== 'draft' && task.status !== 'failed') {
         throw new RuntimeError('CONFLICT', task.status === 'paused' ? 'La tâche est en pause : reprenez-la.' : 'La tâche est déjà démarrée.');
       }
+      /* Replaced sessions are closed first so an old provider handle cannot keep working beside the retry. */
+      for (const s of task.subtasks) {
+        if ((s.status === 'failed' || s.status === 'cancelled') && s.sessionId && this.sessions.isLive(s.sessionId)) {
+          await this.sessions.cancel(s.sessionId).catch((err) => this.log.warn('could not close replaced session', { sessionId: s.sessionId, err: String(err) }));
+        }
+      }
       const subtasks = task.subtasks.map((s) => (s.status === 'failed' || s.status === 'cancelled' ? { ...s, status: 'pending' as const, sessionId: null, error: null } : s));
       task = await this.save(task, 'queued', { subtasks, startedAt: task.startedAt ?? new Date().toISOString() });
       const { task: advanced, sessions, errors } = await this.advance(task);
@@ -388,7 +394,8 @@ export class TaskService {
     const task = await this.repo.get(session.taskId);
     if (!task) return;
     const sub = task.subtasks.find((s) => s.sessionId === session.id);
-    if (!sub) return;
+    /* A session the scheduler replaced (retry) must never run again beside its replacement. */
+    if (!sub) throw new RuntimeError('CONFLICT', 'Cette session a été remplacée par une nouvelle tentative : ouvrez la session actuelle de l’étape.');
     if (task.status === 'completed' || task.status === 'cancelled') {
       throw new RuntimeError('CONFLICT', 'Cette tâche est terminée : créez une nouvelle tâche pour continuer.');
     }

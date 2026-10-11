@@ -329,6 +329,14 @@ describe('orchestration and worktrees', () => {
     expect(failed.subtasks.map((s) => s.status)).toEqual(['failed', 'cancelled']);
     expect(failed.subtasks[0]?.error).toContain('quota épuisé');
     expect((await client.request('sessions.get', { sessionId: failed.subtasks[0]!.sessionId! })).session.status).toBe('failed');
+    /* A retry replaces the session; the old one is closed and can no longer be driven. */
+    const oldSession = failed.subtasks[0]!.sessionId!;
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'failed');
+    const retried = await client.request('tasks.get', { taskId: task.id });
+    expect(retried.subtasks[0]!.sessionId).not.toBe(oldSession);
+    expect(runtime.services.sessions.isLive(oldSession)).toBe(false);
+    await expect(client.request('sessions.send', { sessionId: oldSession, text: 'encore' })).rejects.toThrow(/remplacée/);
   });
 
   it('refuses a send while another step works in the shared worktree, and once the task is closed', async () => {

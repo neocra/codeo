@@ -152,6 +152,11 @@ export class WorktreeService {
       const ws = await this.workspaces.get(worktree.workspaceId);
       const repository = ws.repositories.find((r) => r.id === worktree.repositoryId);
       if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${worktree.repositoryId}`);
+      /* Only what git knows as this lane's worktree on its branch is ever removed; a replaced directory is foreign. */
+      const registered = await this.registeredWorktree(repository.path, worktree.path);
+      if (!registered || registered.branch !== worktree.branch) {
+        throw new RuntimeError('CONFLICT', `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : Codeo n’y touche pas. Retirez-le manuellement puis supprimez cette entrée.`);
+      }
       if (!opts.force && (await isDirty(worktree.path).catch(() => false))) {
         throw new RuntimeError('CONFLICT', 'Ce worktree contient des modifications non commitées. Confirmez la suppression forcée pour les abandonner.');
       }
