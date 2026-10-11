@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { localizedError, RuntimeError } from '@codeo/contracts';
+import { localizedError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
 import { createWorktree, isDirty, listWorktrees, pruneWorktrees, removeWorktree, resolveCommit } from '@codeo/git';
@@ -53,7 +53,7 @@ export class WorktreeService {
 
   async get(id: string): Promise<Worktree> {
     const w = await this.repo.get(id);
-    if (!w) throw new RuntimeError('NOT_FOUND', `Worktree introuvable: ${id}`);
+    if (!w) throw localizedError('NOT_FOUND', 'worktree.notFound', { id }, `Worktree introuvable: ${id}`);
     return w;
   }
 
@@ -63,7 +63,7 @@ export class WorktreeService {
     const worktree = await this.get(id);
     const ws = await this.workspaces.get(worktree.workspaceId);
     const repository = ws.repositories.find((r) => r.id === worktree.repositoryId);
-    if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${worktree.repositoryId}`);
+    if (!repository) throw localizedError('NOT_FOUND', 'repo.notFound', { id: worktree.repositoryId }, `Dépôt introuvable: ${worktree.repositoryId}`);
     const registered = await this.registeredWorktree(repository.path, worktree.path);
     if (!registered || registered.branch !== worktree.branch) {
       throw localizedError('CONFLICT', 'worktree.notLaneResume', { path: worktree.path, branch: worktree.branch }, `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : la session ne peut pas y reprendre.`);
@@ -98,7 +98,7 @@ export class WorktreeService {
   private async ensureForSubtaskLocked(task: Task, sub: Subtask, repositoryId: string): Promise<Worktree> {
     const ws = await this.workspaces.get(task.workspaceId);
     const repository = ws.repositories.find((r) => r.id === repositoryId);
-    if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${repositoryId}`);
+    if (!repository) throw localizedError('NOT_FOUND', 'repo.notFound', { id: repositoryId }, `Dépôt introuvable: ${repositoryId}`);
     const lane = sharesWorktree(task.orchestration) ? null : sub;
     const existing = await this.repo.findLane(task.id, repository.id, lane?.id ?? null);
     if (existing && existsSync(existing.path)) {
@@ -166,7 +166,7 @@ export class WorktreeService {
     if (existsSync(worktree.path)) {
       const ws = await this.workspaces.get(worktree.workspaceId);
       const repository = ws.repositories.find((r) => r.id === worktree.repositoryId);
-      if (!repository) throw new RuntimeError('NOT_FOUND', `Dépôt introuvable: ${worktree.repositoryId}`);
+      if (!repository) throw localizedError('NOT_FOUND', 'repo.notFound', { id: worktree.repositoryId }, `Dépôt introuvable: ${worktree.repositoryId}`);
       /* Only what git knows as this lane's worktree on its branch is ever removed; a replaced directory is foreign. */
       const registered = await this.registeredWorktree(repository.path, worktree.path);
       if (!registered || registered.branch !== worktree.branch) {

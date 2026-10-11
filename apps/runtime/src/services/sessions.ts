@@ -21,6 +21,8 @@ interface Live {
   flushTimer: ReturnType<typeof setTimeout> | null;
   /** Provider events are handled strictly in order per session. */
   chain: Promise<void>;
+  /** Set when Codeo itself interrupts the turn (stop, release, shutdown): the provider's `ok: false` is not a failure then. */
+  interrupting: boolean;
 }
 
 /** Where a session runs when the task scheduler places it (worktree). Plain sessions run in the repository root. */
@@ -206,7 +208,7 @@ export class SessionService {
       const failed = await this.setStatus(session, 'failed', status?.error ?? 'Fournisseur non disponible.');
       throw new RuntimeError('PROVIDER_UNAVAILABLE', failed.error ?? 'Fournisseur non disponible.');
     }
-    const live: Live = { handle: null as unknown as ProviderSessionHandle, seq: await this.repo.lastSeq(session.id), streaming: new Map(), tools: new Map(), flushTimer: null, chain: Promise.resolve() };
+    const live: Live = { handle: null as unknown as ProviderSessionHandle, seq: await this.repo.lastSeq(session.id), streaming: new Map(), tools: new Map(), flushTimer: null, chain: Promise.resolve(), interrupting: false };
     this.live.set(session.id, live);
     let current = session;
     const sessionId = session.id;
@@ -347,6 +349,10 @@ export class SessionService {
         await this.append(session, live, { kind: 'result', ok: ev.ok, summary: ev.summary, durationMs: ev.durationMs, costUsd: ev.costUsd, turns: ev.turns });
         const fresh = await this.get(sessionId);
         if (fresh.status === 'running' || fresh.status === 'waiting_approval') {
+          if (live.interrupting && !ev.ok) {
+            /* Interrupted by Codeo (stop, release, shutdown): the caller applies cancelled/disconnected; nothing failed. */
+            return;
+          }
           /* A turn the provider reports as failed (Codex turn.failed, Claude error_* results) is a failed session, not an idle one. */
           await this.setStatus(fresh, ev.ok ? 'idle' : 'failed', ev.ok ? null : ev.summary || 'Le tour de l’agent a échoué.');
         }
@@ -409,6 +415,7 @@ export class SessionService {
     const live = this.live.get(sessionId);
     this.approvals.cancelForSession(sessionId);
     if (live) {
+      live.interrupting = true;
       await live.handle.interrupt().catch(() => undefined);
       /* The live entry goes only once the provider is really gone, so a failed close stays visible and retryable. */
       await live.handle.close();
@@ -432,6 +439,7 @@ export class SessionService {
     if (session.status === 'running' || session.status === 'waiting_approval') {
       throw localizedError('CONFLICT', 'session.agentBusy', undefined, 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
     }
+    live.interrupting = true;
     await live.handle.close();
     this.live.delete(sessionId);
     await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', text: reason }));
@@ -444,6 +452,7 @@ export class SessionService {
 
   async shutdown(): Promise<void> {
     for (const [id, live] of this.live) {
+      live.interrupting = true;
       await live.handle.close().catch((err) => this.log.warn('provider close failed at shutdown', { id, err: String(err) }));
       /* Events the adapter emitted before closing are still queued on the chain: let them land before the status flips. */
       await live.chain.catch(() => undefined);
