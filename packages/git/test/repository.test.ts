@@ -76,8 +76,8 @@ describe('worktrees', () => {
     await createWorktree({ root: dir, path: wt, branch: 'feature/identity', baseBranch: 'main' });
     const id = await worktreeIdentity(wt);
     expect(id?.branch).toBe('feature/identity');
-    /* Canonical paths: macOS maps /tmp to /private/tmp. */
-    expect(realpathSync(id!.commonDir)).toBe(realpathSync((await worktreeIdentity(dir))!.commonDir));
+    /* Canonical paths: macOS maps /tmp to /private/tmp, Windows temp dirs use 8.3 short names (.native expands them). */
+    expect(realpathSync.native(id!.commonDir)).toBe(realpathSync.native((await worktreeIdentity(dir))!.commonDir));
     rmSync(wt, { recursive: true, force: true });
     /* A plain folder inside the repository reports the repository itself (branch main), never the worktree's branch… */
     mkdirSync(wt, { recursive: true });
