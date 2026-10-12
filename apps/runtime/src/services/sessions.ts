@@ -1,7 +1,18 @@
-import { roleInstructions, type ProviderEvent, type ProviderSessionHandle } from '@codeo/agent-provider-core';
+import {
+  roleInstructions,
+  type ProviderEvent,
+  type ProviderSessionHandle,
+} from '@codeo/agent-provider-core';
 import { localizedError, RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { SessionRepo } from '@codeo/database';
-import { canTransitionSession, sessionTransition, type AgentSession, type SessionEntry, type SessionStatus, type Workspace } from '@codeo/domain';
+import {
+  canTransitionSession,
+  sessionTransition,
+  type AgentSession,
+  type SessionEntry,
+  type SessionStatus,
+  type Workspace,
+} from '@codeo/domain';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { KeyedLock, newId, type Logger } from '@codeo/shared-utils';
@@ -10,7 +21,11 @@ import type { ApprovalService } from './approvals';
 import type { ProviderRegistry } from './providers';
 import type { WorkspaceService } from './workspaces';
 
-type EntryDraft = SessionEntry extends infer E ? (E extends SessionEntry ? Omit<E, 'id' | 'sessionId' | 'seq' | 'at'> : never) : never;
+type EntryDraft = SessionEntry extends infer E
+  ? E extends SessionEntry
+    ? Omit<E, 'id' | 'sessionId' | 'seq' | 'at'>
+    : never
+  : never;
 
 interface Live {
   handle: ProviderSessionHandle;
@@ -46,7 +61,11 @@ export interface SystemNote {
   text: string;
   params?: Record<string, string | number>;
 }
-export type SendInterceptor = (session: AgentSession, next: () => Promise<AgentSession>, operation: SessionOperation) => Promise<AgentSession>;
+export type SendInterceptor = (
+  session: AgentSession,
+  next: () => Promise<AgentSession>,
+  operation: SessionOperation,
+) => Promise<AgentSession>;
 
 export interface SessionListener {
   onStatus(session: AgentSession, previous: SessionStatus): void;
@@ -87,12 +106,17 @@ export class SessionService {
 
   async init(): Promise<void> {
     /* Sessions that were running when the runtime died are marked disconnected (resumable). */
-    for (const s of await this.repo.list({ statuses: ['running', 'waiting_approval', 'created'] })) {
+    for (const s of await this.repo.list({
+      statuses: ['running', 'waiting_approval', 'created'],
+    })) {
       await this.setStatus(s, 'disconnected', 'Runtime redémarré pendant la session.');
     }
   }
 
-  list(filter: { workspaceId?: string | undefined; taskId?: string | undefined }): Promise<AgentSession[]> {
+  list(filter: {
+    workspaceId?: string | undefined;
+    taskId?: string | undefined;
+  }): Promise<AgentSession[]> {
     return this.repo.list(filter);
   }
 
@@ -116,7 +140,11 @@ export class SessionService {
     return run;
   }
 
-  private async setStatus(session: AgentSession, status: SessionStatus, error: string | null = null): Promise<AgentSession> {
+  private async setStatus(
+    session: AgentSession,
+    status: SessionStatus,
+    error: string | null = null,
+  ): Promise<AgentSession> {
     const previous = session.status;
     let next: SessionStatus;
     try {
@@ -126,7 +154,13 @@ export class SessionService {
       return session;
     }
     const now = new Date().toISOString();
-    const updated: AgentSession = { ...session, status: next, error, updatedAt: now, lastActivityAt: now };
+    const updated: AgentSession = {
+      ...session,
+      status: next,
+      error,
+      updatedAt: now,
+      lastActivityAt: now,
+    };
     await this.repo.upsert(updated);
     if (next !== previous) {
       this.bus.publish('SessionUpdated', { session: updated });
@@ -135,9 +169,19 @@ export class SessionService {
     return updated;
   }
 
-  private async append(session: AgentSession, live: Live, entry: EntryDraft): Promise<SessionEntry> {
+  private async append(
+    session: AgentSession,
+    live: Live,
+    entry: EntryDraft,
+  ): Promise<SessionEntry> {
     live.seq += 1;
-    const full = { ...entry, id: newId('ent'), sessionId: session.id, seq: live.seq, at: new Date().toISOString() } as SessionEntry;
+    const full = {
+      ...entry,
+      id: newId('ent'),
+      sessionId: session.id,
+      seq: live.seq,
+      at: new Date().toISOString(),
+    } as SessionEntry;
     await this.repo.appendEntry(full);
     this.bus.publish('SessionEntryAppended', { sessionId: session.id, entry: full });
     return full;
@@ -155,11 +199,20 @@ export class SessionService {
       return r.path;
     }
     const first = ws.repositories[0];
-    if (!first) throw localizedError('INVALID_PARAMS', 'workspace.noRepository', undefined, 'L’espace de travail n’a aucun dépôt.');
+    if (!first)
+      throw localizedError(
+        'INVALID_PARAMS',
+        'workspace.noRepository',
+        undefined,
+        'L’espace de travail n’a aucun dépôt.',
+      );
     return first.path;
   }
 
-  async start(input: CommandParsedParams<'sessions.start'>, placement?: SessionPlacement): Promise<AgentSession> {
+  async start(
+    input: CommandParsedParams<'sessions.start'>,
+    placement?: SessionPlacement,
+  ): Promise<AgentSession> {
     const ws = await this.workspaces.get(input.workspaceId);
     const cwd = placement?.cwd ?? this.resolveCwd(ws, input.repositoryId);
     const now = new Date().toISOString();
@@ -184,7 +237,9 @@ export class SessionService {
     };
     await this.repo.upsert(session);
     this.bus.publish('SessionCreated', { session });
-    return placement?.worktreeId ? this.worktreeLocks.run(laneKey(cwd), () => this.launch(session, input.prompt)) : this.launch(session, input.prompt);
+    return placement?.worktreeId
+      ? this.worktreeLocks.run(laneKey(cwd), () => this.launch(session, input.prompt))
+      : this.launch(session, input.prompt);
   }
 
   /** Starts (or resumes) the provider process behind a session and sends the prompt. */
@@ -193,51 +248,96 @@ export class SessionService {
       const message = `Le dossier de travail de cette session n’existe plus (${session.cwd}) : le worktree a été supprimé.`;
       /* Leave a terminal state behind, as the provider-unavailable path does, so recovery never resumes it;
          pick one the state machine allows from here (idle → completed, created/disconnected → failed). */
-      const terminal = canTransitionSession(session.status, 'completed') ? 'completed' : canTransitionSession(session.status, 'failed') ? 'failed' : null;
+      const terminal = canTransitionSession(session.status, 'completed')
+        ? 'completed'
+        : canTransitionSession(session.status, 'failed')
+          ? 'failed'
+          : null;
       if (terminal) await this.setStatus(session, terminal, message);
       throw localizedError('CONFLICT', 'session.dirGone', { path: session.cwd }, message);
     }
     await this.assertWorktreeIntact(session, null);
-    if (this.closed) throw localizedError('CONFLICT', 'runtime.stopping', undefined, 'Le runtime s’arrête : aucune session ne peut démarrer.');
+    if (this.closed)
+      throw localizedError(
+        'CONFLICT',
+        'runtime.stopping',
+        undefined,
+        'Le runtime s’arrête : aucune session ne peut démarrer.',
+      );
     const provider = this.providers.get(session.provider);
     const status = this.providers.status(session.provider);
     if (!status?.installed) {
-      const failed = await this.setStatus(session, 'failed', status?.error ?? 'Fournisseur non disponible.');
+      const failed = await this.setStatus(
+        session,
+        'failed',
+        status?.error ?? 'Fournisseur non disponible.',
+      );
       throw new RuntimeError('PROVIDER_UNAVAILABLE', failed.error ?? 'Fournisseur non disponible.');
     }
-    const live: Live = { handle: null as unknown as ProviderSessionHandle, seq: await this.repo.lastSeq(session.id), streaming: new Map(), tools: new Map(), flushTimer: null, chain: Promise.resolve(), interrupting: false };
-    this.live.set(session.id, live);
+    const live: Live = {
+      handle: null as unknown as ProviderSessionHandle,
+      seq: await this.repo.lastSeq(session.id),
+      streaming: new Map(),
+      tools: new Map(),
+      flushTimer: null,
+      chain: Promise.resolve(),
+      interrupting: false,
+    };
+    /* Registered as live only once the provider exists (see below); shutdown waits for starts still in flight. */
     let current = session;
     const sessionId = session.id;
 
     const onEvent = (ev: ProviderEvent) => {
-      live.chain = live.chain.then(() => this.handleProviderEvent(sessionId, live, ev)).catch((err) => this.log.error('event handling failed', { sessionId, err: String(err) }));
+      live.chain = live.chain
+        .then(() => this.handleProviderEvent(sessionId, live, ev))
+        .catch((err) => this.log.error('event handling failed', { sessionId, err: String(err) }));
     };
 
+    /* Re-checked synchronously right before the start so shutdown's admission close cannot slip in between. */
+    if (this.closed)
+      throw localizedError(
+        'CONFLICT',
+        'runtime.stopping',
+        undefined,
+        'Le runtime s’arrête : aucune session ne peut démarrer.',
+      );
+    const starting = provider.startSession({
+      cwd: session.cwd,
+      role: session.role,
+      roleInstructions: roleInstructions(session.role),
+      model: session.model,
+      resumeProviderSessionId: session.providerSessionId,
+      onEvent,
+      onPermissionRequest: async (req) => {
+        const s = await this.serialize(live, async () =>
+          this.setStatus(await this.get(sessionId), 'waiting_approval'),
+        );
+        const decision = await this.approvals.request(
+          { sessionId, taskId: s.taskId, workspaceId: s.workspaceId, provider: s.provider },
+          req,
+        );
+        await this.serialize(live, async () => {
+          const after = await this.get(sessionId);
+          if (after.status === 'waiting_approval') await this.setStatus(after, 'running');
+        });
+        return decision;
+      },
+      logger: this.log,
+    });
+    this.inflight.add(starting);
     try {
-      live.handle = await provider.startSession({
-        cwd: session.cwd,
-        role: session.role,
-        roleInstructions: roleInstructions(session.role),
-        model: session.model,
-        resumeProviderSessionId: session.providerSessionId,
-        onEvent,
-        onPermissionRequest: async (req) => {
-          const s = await this.serialize(live, async () => this.setStatus(await this.get(sessionId), 'waiting_approval'));
-          const decision = await this.approvals.request({ sessionId, taskId: s.taskId, workspaceId: s.workspaceId, provider: s.provider }, req);
-          await this.serialize(live, async () => {
-            const after = await this.get(sessionId);
-            if (after.status === 'waiting_approval') await this.setStatus(after, 'running');
-          });
-          return decision;
-        },
-        logger: this.log,
-      });
+      live.handle = await starting;
     } catch (err) {
-      this.live.delete(sessionId);
-      const failed = await this.setStatus(current, 'failed', err instanceof Error ? err.message : String(err));
+      const failed = await this.setStatus(
+        current,
+        'failed',
+        err instanceof Error ? err.message : String(err),
+      );
       throw new RuntimeError('PROVIDER_UNAVAILABLE', failed.error ?? 'Échec du démarrage.');
+    } finally {
+      this.inflight.delete(starting);
     }
+    this.live.set(session.id, live);
     /* From here a provider process exists: any failure before the first turn is accepted must close it, so a
        retry never finds a live but unrecorded agent in the worktree. */
     try {
@@ -252,40 +352,75 @@ export class SessionService {
         await live.handle.close();
       } catch (closeErr) {
         /* The provider may still be running: keep it tracked (live) so a retry must close it first, and tell the caller which session. */
-        this.log.error('could not close partially started session', { sessionId, err: String(closeErr) });
-        throw new RuntimeError('INTERNAL', `Démarrage interrompu et agent toujours actif (${message}) : arrêtez la session avant de réessayer.`, {
-          key: 'session.startFailedLive',
-          params: { reason: message },
+        this.log.error('could not close partially started session', {
           sessionId,
+          err: String(closeErr),
         });
+        throw new RuntimeError(
+          'INTERNAL',
+          `Démarrage interrompu et agent toujours actif (${message}) : arrêtez la session avant de réessayer.`,
+          {
+            key: 'session.startFailedLive',
+            params: { reason: message },
+            sessionId,
+          },
+        );
       }
       this.live.delete(sessionId);
       const latest = await this.get(sessionId);
-      const terminal = canTransitionSession(latest.status, 'failed') ? 'failed' : canTransitionSession(latest.status, 'completed') ? 'completed' : null;
+      const terminal = canTransitionSession(latest.status, 'failed')
+        ? 'failed'
+        : canTransitionSession(latest.status, 'completed')
+          ? 'completed'
+          : null;
       if (terminal) await this.setStatus(latest, terminal, message);
-      const details = err instanceof RuntimeError && err.details && typeof err.details === 'object' ? { ...(err.details as object), sessionId } : { key: 'session.startFailed', params: { reason: message }, sessionId };
-      throw new RuntimeError(err instanceof RuntimeError ? err.code : 'PROVIDER_UNAVAILABLE', message, details);
+      const details =
+        err instanceof RuntimeError && err.details && typeof err.details === 'object'
+          ? { ...(err.details as object), sessionId }
+          : { key: 'session.startFailed', params: { reason: message }, sessionId };
+      throw new RuntimeError(
+        err instanceof RuntimeError ? err.code : 'PROVIDER_UNAVAILABLE',
+        message,
+        details,
+      );
     }
   }
 
-  private async handleProviderEvent(sessionId: string, live: Live, ev: ProviderEvent): Promise<void> {
+  private async handleProviderEvent(
+    sessionId: string,
+    live: Live,
+    ev: ProviderEvent,
+  ): Promise<void> {
     const session = await this.get(sessionId);
     switch (ev.type) {
       case 'session_started': {
-        if (session.providerSessionId !== ev.providerSessionId || (ev.model && session.model !== ev.model)) {
-          const updated = { ...session, providerSessionId: ev.providerSessionId, model: ev.model ?? session.model, updatedAt: new Date().toISOString() };
+        if (
+          session.providerSessionId !== ev.providerSessionId ||
+          (ev.model && session.model !== ev.model)
+        ) {
+          const updated = {
+            ...session,
+            providerSessionId: ev.providerSessionId,
+            model: ev.model ?? session.model,
+            updatedAt: new Date().toISOString(),
+          };
           await this.repo.upsert(updated);
           this.bus.publish('SessionUpdated', { session: updated });
         }
         return;
       }
       case 'status':
-        if (ev.state === 'running' && session.status === 'idle') await this.setStatus(session, 'running');
+        if (ev.state === 'running' && session.status === 'idle')
+          await this.setStatus(session, 'running');
         return;
       case 'text_delta': {
         const entry = live.streaming.get(ev.blockId);
         if (!entry) {
-          const created = (await this.append(session, live, { kind: 'assistant_text', text: ev.delta, streaming: true })) as Extract<SessionEntry, { kind: 'assistant_text' }>;
+          const created = (await this.append(session, live, {
+            kind: 'assistant_text',
+            text: ev.delta,
+            streaming: true,
+          })) as Extract<SessionEntry, { kind: 'assistant_text' }>;
           live.streaming.set(ev.blockId, created);
           return;
         }
@@ -294,7 +429,8 @@ export class SessionService {
         if (!live.flushTimer) {
           live.flushTimer = setTimeout(() => {
             live.flushTimer = null;
-            for (const e of live.streaming.values()) this.bus.publish('SessionEntryUpdated', { sessionId, entry: e });
+            for (const e of live.streaming.values())
+              this.bus.publish('SessionEntryUpdated', { sessionId, entry: e });
           }, 60);
         }
         return;
@@ -306,7 +442,11 @@ export class SessionService {
           const done = { ...existing, text: ev.text, streaming: false };
           await this.update(session, done);
         } else if (ev.text.trim()) {
-          await this.append(session, live, { kind: 'assistant_text', text: ev.text, streaming: false });
+          await this.append(session, live, {
+            kind: 'assistant_text',
+            text: ev.text,
+            streaming: false,
+          });
         }
         return;
       }
@@ -314,7 +454,14 @@ export class SessionService {
         await this.append(session, live, { kind: 'thinking', text: ev.text });
         return;
       case 'tool_call_started': {
-        const entry = (await this.append(session, live, { kind: 'tool_call', toolUseId: ev.toolUseId, tool: ev.tool, input: ev.input, status: 'running', output: null })) as Extract<SessionEntry, { kind: 'tool_call' }>;
+        const entry = (await this.append(session, live, {
+          kind: 'tool_call',
+          toolUseId: ev.toolUseId,
+          tool: ev.tool,
+          input: ev.input,
+          status: 'running',
+          output: null,
+        })) as Extract<SessionEntry, { kind: 'tool_call' }>;
         live.tools.set(ev.toolUseId, entry);
         return;
       }
@@ -322,7 +469,11 @@ export class SessionService {
         const entry = live.tools.get(ev.toolUseId);
         if (!entry) return;
         live.tools.delete(ev.toolUseId);
-        await this.update(session, { ...entry, status: ev.isError ? 'failed' : 'completed', output: ev.output });
+        await this.update(session, {
+          ...entry,
+          status: ev.isError ? 'failed' : 'completed',
+          output: ev.output,
+        });
         return;
       }
       case 'tool_call_denied': {
@@ -331,19 +482,38 @@ export class SessionService {
           live.tools.delete(ev.toolUseId);
           await this.update(session, { ...entry, status: 'denied', output: ev.reason });
         } else {
-          await this.append(session, live, { kind: 'system', level: 'warn', key: null, params: null, text: `Outil refusé : ${ev.reason}` });
+          await this.append(session, live, {
+            kind: 'system',
+            level: 'warn',
+            key: null,
+            params: null,
+            text: `Outil refusé : ${ev.reason}`,
+          });
         }
         return;
       }
       case 'system':
-        await this.append(session, live, { kind: 'system', level: ev.level, key: null, params: null, text: ev.text });
+        await this.append(session, live, {
+          kind: 'system',
+          level: ev.level,
+          key: null,
+          params: null,
+          text: ev.text,
+        });
         return;
       case 'turn_completed': {
         for (const [id, e] of live.streaming) {
           await this.update(session, { ...e, streaming: false });
           live.streaming.delete(id);
         }
-        await this.append(session, live, { kind: 'result', ok: ev.ok, summary: ev.summary, durationMs: ev.durationMs, costUsd: ev.costUsd, turns: ev.turns });
+        await this.append(session, live, {
+          kind: 'result',
+          ok: ev.ok,
+          summary: ev.summary,
+          durationMs: ev.durationMs,
+          costUsd: ev.costUsd,
+          turns: ev.turns,
+        });
         const fresh = await this.get(sessionId);
         if (fresh.status === 'running' || fresh.status === 'waiting_approval') {
           if (live.interrupting && !ev.ok) {
@@ -351,12 +521,22 @@ export class SessionService {
             return;
           }
           /* A turn the provider reports as failed (Codex turn.failed, Claude error_* results) is a failed session, not an idle one. */
-          await this.setStatus(fresh, ev.ok ? 'idle' : 'failed', ev.ok ? null : ev.summary || 'Le tour de l’agent a échoué.');
+          await this.setStatus(
+            fresh,
+            ev.ok ? 'idle' : 'failed',
+            ev.ok ? null : ev.summary || 'Le tour de l’agent a échoué.',
+          );
         }
         return;
       }
       case 'error': {
-        await this.append(session, live, { kind: 'system', level: 'error', key: null, params: null, text: ev.message });
+        await this.append(session, live, {
+          kind: 'system',
+          level: 'error',
+          key: null,
+          params: null,
+          text: ev.message,
+        });
         if (ev.fatal) {
           this.live.delete(sessionId);
           this.approvals.cancelForSession(sessionId);
@@ -368,11 +548,21 @@ export class SessionService {
   }
 
   /** `fromScheduler`: the task scheduler already holds the task lock, so interceptors are skipped (they would deadlock). */
-  async send(sessionId: string, text: string, opts: { fromScheduler?: boolean } = {}): Promise<AgentSession> {
+  async send(
+    sessionId: string,
+    text: string,
+    opts: { fromScheduler?: boolean } = {},
+  ): Promise<AgentSession> {
     const session = await this.get(sessionId);
-    const inner = () => (session.worktreeId ? this.worktreeLocks.run(laneKey(session.cwd), () => this.sendUnlocked(sessionId, text)) : this.sendUnlocked(sessionId, text));
+    const inner = () =>
+      session.worktreeId
+        ? this.worktreeLocks.run(laneKey(session.cwd), () => this.sendUnlocked(sessionId, text))
+        : this.sendUnlocked(sessionId, text);
     if (opts.fromScheduler) return inner();
-    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>((next, interceptor) => () => interceptor(session, next, 'send'), inner)();
+    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>(
+      (next, interceptor) => () => interceptor(session, next, 'send'),
+      inner,
+    )();
   }
 
   private async sendUnlocked(sessionId: string, text: string): Promise<AgentSession> {
@@ -380,16 +570,33 @@ export class SessionService {
     const live = this.live.get(sessionId);
     if (!live) {
       /* Reopened session: resume the provider conversation with the stored provider session id. */
-      if (!session.providerSessionId) throw localizedError('CONFLICT', 'session.noProviderId', undefined, 'Cette session ne peut pas être reprise (aucun identifiant fournisseur).');
+      if (!session.providerSessionId)
+        throw localizedError(
+          'CONFLICT',
+          'session.noProviderId',
+          undefined,
+          'Cette session ne peut pas être reprise (aucun identifiant fournisseur).',
+        );
       return this.launch(session, text);
     }
-    if (session.status === 'waiting_approval') throw localizedError('CONFLICT', 'session.awaitingApproval', undefined, 'Répondez d’abord à la demande d’approbation.');
+    if (session.status === 'waiting_approval')
+      throw localizedError(
+        'CONFLICT',
+        'session.awaitingApproval',
+        undefined,
+        'Répondez d’abord à la demande d’approbation.',
+      );
     /* The directory may have been replaced since the provider started: check before every turn, under the path lock. */
     await this.assertWorktreeIntact(session, live);
     if (live.interrupting) {
       /* A stop that could not close the provider is still pending: no new turn until it is retried, otherwise a later
          provider failure would be misread as the interruption. */
-      throw localizedError('CONFLICT', 'session.stopPending', undefined, 'L’arrêt de cette session n’a pas abouti : réessayez l’arrêt avant d’envoyer un message.');
+      throw localizedError(
+        'CONFLICT',
+        'session.stopPending',
+        undefined,
+        'L’arrêt de cette session n’a pas abouti : réessayez l’arrêt avant d’envoyer un message.',
+      );
     }
     session = await this.serialize(live, async () => {
       const s = await this.setStatus(await this.get(sessionId), 'running');
@@ -431,15 +638,27 @@ export class SessionService {
           await live.handle.close();
         } catch (closeErr) {
           /* The provider may still be running: keep it tracked so a stop can be retried; nothing is terminalized yet. */
-          this.log.error('provider close failed on worktree mismatch', { id: session.id, err: String(closeErr) });
-          throw localizedError('CONFLICT', 'session.stopPending', undefined, 'L’arrêt de cette session n’a pas abouti : réessayez l’arrêt avant d’envoyer un message.');
+          this.log.error('provider close failed on worktree mismatch', {
+            id: session.id,
+            err: String(closeErr),
+          });
+          throw localizedError(
+            'CONFLICT',
+            'session.stopPending',
+            undefined,
+            'L’arrêt de cette session n’a pas abouti : réessayez l’arrêt avant d’envoyer un message.',
+          );
         }
         await live.chain.catch(() => undefined);
         await this.finalizeStreaming(session, live);
         this.live.delete(session.id);
       }
       const latest = await this.get(session.id);
-      const terminal = canTransitionSession(latest.status, 'completed') ? 'completed' : canTransitionSession(latest.status, 'failed') ? 'failed' : null;
+      const terminal = canTransitionSession(latest.status, 'completed')
+        ? 'completed'
+        : canTransitionSession(latest.status, 'failed')
+          ? 'failed'
+          : null;
       if (terminal) await this.setStatus(latest, terminal, message);
       throw err instanceof RuntimeError ? err : new RuntimeError('CONFLICT', message);
     }
@@ -451,7 +670,12 @@ export class SessionService {
     const live = this.live.get(sessionId);
     if (!live) return;
     if (session.status === 'running' || session.status === 'waiting_approval') {
-      throw localizedError('CONFLICT', 'session.agentBusy', undefined, 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
+      throw localizedError(
+        'CONFLICT',
+        'session.agentBusy',
+        undefined,
+        'Un agent travaille encore dans cette session : arrêtez-la d’abord.',
+      );
     }
     live.interrupting = true;
     await live.handle.close();
@@ -464,10 +688,24 @@ export class SessionService {
   async closeSuspendedUnlocked(sessionId: string, reason: SystemNote): Promise<AgentSession> {
     const session = await this.get(sessionId);
     const seq = (await this.repo.lastSeq(sessionId)) + 1;
-    const entry = { kind: 'system' as const, id: newId('ent'), sessionId, seq, at: new Date().toISOString(), level: 'info' as const, key: reason.key, params: reason.params ?? null, text: reason.text };
+    const entry = {
+      kind: 'system' as const,
+      id: newId('ent'),
+      sessionId,
+      seq,
+      at: new Date().toISOString(),
+      level: 'info' as const,
+      key: reason.key,
+      params: reason.params ?? null,
+      text: reason.text,
+    };
     await this.repo.appendEntry(entry);
     this.bus.publish('SessionEntryAppended', { sessionId, entry });
-    const terminal = canTransitionSession(session.status, 'completed') ? 'completed' : canTransitionSession(session.status, 'failed') ? 'failed' : null;
+    const terminal = canTransitionSession(session.status, 'completed')
+      ? 'completed'
+      : canTransitionSession(session.status, 'failed')
+        ? 'failed'
+        : null;
     return terminal ? this.setStatus(session, terminal, reason.text) : session;
   }
 
@@ -481,7 +719,10 @@ export class SessionService {
     const session = await this.get(sessionId);
     const inner = () => this.inWorktree(session, () => this.cancelUnlocked(sessionId));
     if (opts.fromScheduler) return inner();
-    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>((next, interceptor) => () => interceptor(session, next, 'cancel'), inner)();
+    return this.sendInterceptors.reduceRight<() => Promise<AgentSession>>(
+      (next, interceptor) => () => interceptor(session, next, 'cancel'),
+      inner,
+    )();
   }
 
   /** Cancel without taking the worktree lock — for callers that already hold it. */
@@ -497,7 +738,13 @@ export class SessionService {
       this.live.delete(sessionId);
       await this.serialize(live, async () => {
         await this.finalizeStreaming(session, live);
-        await this.append(session, live, { kind: 'system', level: 'info', key: 'stoppedByUser', params: null, text: 'Session arrêtée par l’utilisateur.' });
+        await this.append(session, live, {
+          kind: 'system',
+          level: 'info',
+          key: 'stoppedByUser',
+          params: null,
+          text: 'Session arrêtée par l’utilisateur.',
+        });
       });
     }
     return this.setStatus(await this.get(sessionId), 'cancelled');
@@ -515,14 +762,25 @@ export class SessionService {
     const live = this.live.get(sessionId);
     if (!live) return session;
     if (session.status === 'running' || session.status === 'waiting_approval') {
-      throw localizedError('CONFLICT', 'session.agentBusy', undefined, 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
+      throw localizedError(
+        'CONFLICT',
+        'session.agentBusy',
+        undefined,
+        'Un agent travaille encore dans cette session : arrêtez-la d’abord.',
+      );
     }
     live.interrupting = true;
     await live.handle.close();
     this.live.delete(sessionId);
     await this.serialize(live, async () => {
       await this.finalizeStreaming(session, live);
-      await this.append(session, live, { kind: 'system', level: 'info', key: reason.key, params: reason.params ?? null, text: reason.text });
+      await this.append(session, live, {
+        kind: 'system',
+        level: 'info',
+        key: reason.key,
+        params: reason.params ?? null,
+        text: reason.text,
+      });
     });
     return this.setStatus(await this.get(sessionId), 'completed');
   }
@@ -534,13 +792,22 @@ export class SessionService {
   async shutdown(): Promise<void> {
     /* Admission closes first: a sessions.start racing this sweep must not spawn a provider after the map was walked. */
     this.closed = true;
+    /* Launches that passed admission are allowed to settle (success registers them live, failure cleans up) before the sweep. */
+    await Promise.allSettled([...this.inflight]);
     for (const [id, live] of this.live) {
       live.interrupting = true;
-      await live.handle.close().catch((err) => this.log.warn('provider close failed at shutdown', { id, err: String(err) }));
+      await live.handle
+        .close()
+        .catch((err) =>
+          this.log.warn('provider close failed at shutdown', { id, err: String(err) }),
+        );
       /* Events the adapter emitted before closing are still queued on the chain: let them land before the status flips. */
       await live.chain.catch(() => undefined);
       const s = await this.repo.get(id);
-      if (s) await this.finalizeStreaming(s, live).catch((err) => this.log.warn('could not finalise streaming entries', { id, err: String(err) }));
+      if (s)
+        await this.finalizeStreaming(s, live).catch((err) =>
+          this.log.warn('could not finalise streaming entries', { id, err: String(err) }),
+        );
       this.live.delete(id);
       if (s) await this.setStatus(s, 'disconnected', 'Runtime arrêté.');
     }
@@ -551,6 +818,8 @@ export class SessionService {
 
   /** After shutdown: nothing may start (a late scheduler callback must not spawn a provider). */
   private closed = false;
+  /** Provider starts still awaiting their process: shutdown waits for them after closing admission. */
+  private inflight = new Set<Promise<unknown>>();
   markClosed(): void {
     this.closed = true;
   }
