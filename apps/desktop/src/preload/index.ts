@@ -8,7 +8,7 @@ import { IPC } from '../shared/bridge-types';
  */
 const bridge: CodeoBridge = {
   platform: process.platform,
-  appVersion: process.env['npm_package_version'] ?? '0.1.0',
+  appVersion: process.argv.find((a) => a.startsWith('--codeo-app-version='))?.slice('--codeo-app-version='.length) ?? '0.0.0',
   invoke: (command, params) => ipcRenderer.invoke(IPC.invoke, command, params),
   onEvent: (listener) => {
     const handler = (_: unknown, payload: Parameters<typeof listener>[0]) => listener(payload);
@@ -26,6 +26,15 @@ const bridge: CodeoBridge = {
   getPreference: (key, fallback) => ipcRenderer.invoke(IPC.getPreference, key, fallback),
   setPreference: (key, value) => ipcRenderer.invoke(IPC.setPreference, key, value),
   userName: () => ipcRenderer.invoke(IPC.userName),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.updateCheck),
+  installUpdate: () => ipcRenderer.invoke(IPC.updateInstall),
+  getUpdateStatus: () => ipcRenderer.invoke(IPC.getUpdateStatus),
+  onUpdateStatus: (listener) => {
+    const handler = (_: unknown, status: Parameters<typeof listener>[0]) => listener(status);
+    ipcRenderer.on(IPC.updateStatus, handler);
+    return () => ipcRenderer.removeListener(IPC.updateStatus, handler);
+  },
+  openReleasePage: () => ipcRenderer.invoke(IPC.openReleasePage),
 };
 
 contextBridge.exposeInMainWorld('codeo', bridge);
