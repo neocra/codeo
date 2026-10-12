@@ -5,7 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'e
 import { captureScreens } from './screenshots';
 import { UpdateService } from './updates';
 import WebSocket from 'ws';
-import { CommandNameSchema, commands } from '@codeo/contracts';
+import { CommandNameSchema, commands, RuntimeError } from '@codeo/contracts';
 import { RuntimeClient } from '@codeo/remote-client';
 import { createLogger } from '@codeo/shared-utils';
 import { IPC, type RuntimeStatus } from '../shared/bridge-types';
@@ -102,11 +102,16 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle(IPC.invoke, async (_e, command: unknown, params: unknown) => {
-    const name = CommandNameSchema.parse(command);
-    if (!client) throw new Error('Runtime non connecté');
-    /* Validate at the trust boundary even though the runtime validates again. */
-    const parsed = commands[name].params.parse(params ?? {});
-    return client.request(name, parsed as never);
+    try {
+      const name = CommandNameSchema.parse(command);
+      if (!client) throw new RuntimeError('INTERNAL', 'Runtime non connecté', { key: 'disconnected' });
+      /* Validate at the trust boundary even though the runtime validates again. */
+      const parsed = commands[name].params.parse(params ?? {});
+      return { ok: true, result: await client.request(name, parsed as never) };
+    } catch (err) {
+      if (err instanceof RuntimeError) return { ok: false, error: { code: err.code, message: err.message, details: err.details } };
+      return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : String(err) } };
+    }
   });
   ipcMain.handle(IPC.getRuntimeStatus, () => status);
   ipcMain.handle(IPC.pickDirectory, async (_e, options: { title?: string; defaultPath?: string }) => {

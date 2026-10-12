@@ -10,8 +10,10 @@ import {
   type SessionEntry,
   type Task,
   type Workspace,
+  type Worktree,
+  WorktreeSchema,
 } from '@codeo/domain';
-import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from './client';
 import * as s from './schema';
 
@@ -114,6 +116,7 @@ export class TaskRepo {
       objective: t.objective,
       status: t.status,
       orchestration: t.orchestration,
+      isolation: t.isolation,
       repositoryIds: json(t.repositoryIds),
       subtasks: json(t.subtasks),
       progress: Math.round(t.progress),
@@ -123,6 +126,53 @@ export class TaskRepo {
       completedAt: t.completedAt,
     };
     await this.db.insert(s.tasks).values(values).onConflictDoUpdate({ target: s.tasks.id, set: values });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/** Persisted worktrees. `dirty` is live git state: callers compute it, it is never stored. */
+export class WorktreeRepo {
+  constructor(private db: Database) {}
+  private hydrate(row: typeof s.worktrees.$inferSelect): Worktree {
+    return WorktreeSchema.parse({ ...row, dirty: false });
+  }
+  async list(filter: { workspaceId?: string | undefined; taskId?: string | undefined } = {}): Promise<Worktree[]> {
+    const conds = [];
+    if (filter.workspaceId) conds.push(eq(s.worktrees.workspaceId, filter.workspaceId));
+    if (filter.taskId) conds.push(eq(s.worktrees.taskId, filter.taskId));
+    const rows = await this.db
+      .select()
+      .from(s.worktrees)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(asc(s.worktrees.createdAt));
+    return rows.map((r) => this.hydrate(r));
+  }
+  async get(id: string): Promise<Worktree | null> {
+    const row = (await this.db.select().from(s.worktrees).where(eq(s.worktrees.id, id)))[0];
+    return row ? this.hydrate(row) : null;
+  }
+  /** The worktree of a task lane: one per (task, repository), or per subtask in parallel modes. */
+  async findLane(taskId: string, repositoryId: string, subtaskId: string | null): Promise<Worktree | null> {
+    const row = (
+      await this.db
+        .select()
+        .from(s.worktrees)
+        .where(
+          and(
+            eq(s.worktrees.taskId, taskId),
+            eq(s.worktrees.repositoryId, repositoryId),
+            subtaskId ? eq(s.worktrees.subtaskId, subtaskId) : isNull(s.worktrees.subtaskId),
+          ),
+        )
+    )[0];
+    return row ? this.hydrate(row) : null;
+  }
+  async insert(w: Worktree): Promise<void> {
+    const { dirty: _dirty, ...values } = w;
+    await this.db.insert(s.worktrees).values(values);
+  }
+  async delete(id: string): Promise<void> {
+    await this.db.delete(s.worktrees).where(eq(s.worktrees.id, id));
   }
 }
 

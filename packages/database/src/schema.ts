@@ -46,6 +46,7 @@ export const tasks = sqliteTable(
     objective: text('objective').notNull().default(''),
     status: text('status').notNull(),
     orchestration: text('orchestration').notNull().default('single'),
+    isolation: text('isolation').notNull().default('worktree'),
     /** JSON array of repository ids */
     repositoryIds: text('repository_ids').notNull().default('[]'),
     /** JSON array of Subtask */
@@ -121,15 +122,21 @@ export const approvalRequests = sqliteTable(
   (t) => [index('approvals_status_idx').on(t.status), index('approvals_session_idx').on(t.sessionId)],
 );
 
-export const worktrees = sqliteTable('worktrees', {
-  id: text('id').primaryKey(),
-  repositoryId: text('repository_id').notNull(),
-  taskId: text('task_id'),
-  path: text('path').notNull(),
-  branch: text('branch').notNull(),
-  baseBranch: text('base_branch').notNull(),
-  createdAt: text('created_at').notNull(),
-});
+export const worktrees = sqliteTable(
+  'worktrees',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id').notNull().default(''),
+    repositoryId: text('repository_id').notNull(),
+    taskId: text('task_id'),
+    subtaskId: text('subtask_id'),
+    path: text('path').notNull(),
+    branch: text('branch').notNull(),
+    baseBranch: text('base_branch').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('worktrees_task_idx').on(t.taskId), index('worktrees_workspace_idx').on(t.workspaceId)],
+);
 
 /** Persistent, append-only event log used for UI sync, remote replay and audit. */
 export const events = sqliteTable(

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { RepositoryInspection } from '@codeo/contracts';
 import { Button, Card, Choice, Dialog, EmptyState, Field, Icon, Input, PageHeader, RepoChip, StatusPill } from '@codeo/ui-desktop';
-import { codeo, invoke } from '../lib/api';
+import { codeo, invoke, describeError } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { keys, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
@@ -38,7 +38,7 @@ function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClose: () =
       setName('');
       onClose();
     },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => setError(describeError(e, t)),
   });
   const valid = name.trim().length > 0 && repos.length > 0 && (type === 'multi-repo' || repos.length === 1);
   return (

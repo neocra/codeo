@@ -72,11 +72,41 @@ export async function isDirty(root: string): Promise<boolean> {
   return stdout.trim().length > 0;
 }
 
+/**
+ * What a directory says about itself: the common git dir it is linked to and its checked-out branch.
+ * `null` when the directory is not a git working tree at all (a plain folder dropped at a worktree path).
+ */
+export async function worktreeIdentity(dir: string): Promise<{ commonDir: string; branch: string | null } | null> {
+  const d = assertAbsolutePath(dir);
+  if (!existsSync(d)) return null;
+  try {
+    const { stdout } = await git(['rev-parse', '--git-common-dir'], { cwd: d });
+    const common = stdout.trim();
+    if (!common) return null;
+    const commonDir = path.isAbsolute(common) ? common : path.resolve(d, common);
+    return { commonDir, branch: await currentBranch(d) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Drops git's registration of ONE worktree whose directory no longer exists, leaving every other registration
+ * (e.g. a worktree on a disconnected volume) untouched. Refuses when the directory still exists.
+ */
+export async function forgetMissingWorktree(root: string, worktreePath: string): Promise<void> {
+  const r = assertAbsolutePath(root, 'root');
+  const w = assertAbsolutePath(worktreePath, 'worktree path');
+  if (existsSync(w)) throw new Error(`Worktree directory still exists, refusing to forget it: ${w}`);
+  await git(['worktree', 'remove', '--force', w], { cwd: r, timeoutMs: 60_000 });
+}
+
+/** `-z` keeps paths verbatim (without it, git C-quotes non-ASCII paths such as a user profile with accents). */
 export async function listWorktrees(root: string): Promise<WorktreeInfo[]> {
-  const { stdout } = await git(['worktree', 'list', '--porcelain'], { cwd: root });
+  const { stdout } = await git(['worktree', 'list', '--porcelain', '-z'], { cwd: root });
   const out: WorktreeInfo[] = [];
   let cur: Partial<WorktreeInfo> = {};
-  for (const line of stdout.split('\n')) {
+  for (const line of stdout.split('\0')) {
     if (line.startsWith('worktree ')) cur = { path: line.slice(9), branch: null };
     else if (line.startsWith('HEAD ')) cur.head = line.slice(5);
     else if (line.startsWith('branch ')) cur.branch = line.slice(7).replace(/^refs\/heads\//, '');
@@ -87,6 +117,27 @@ export async function listWorktrees(root: string): Promise<WorktreeInfo[]> {
   }
   if (cur.path) out.push({ path: cur.path, branch: cur.branch ?? null, head: cur.head ?? '' });
   return out;
+}
+
+/** The commit a ref points to, or null when it does not resolve (unknown ref, repository without commits). */
+export async function resolveCommit(root: string, ref: string): Promise<string | null> {
+  if (ref.startsWith('-')) return null;
+  try {
+    const { stdout } = await git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd: root });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function branchExists(root: string, branch: string): Promise<boolean> {
+  if (branch.startsWith('-')) return false;
+  try {
+    await git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: root });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function listBranches(root: string): Promise<string[]> {
@@ -139,13 +190,21 @@ export interface CreateWorktreeOptions {
   baseBranch: string;
 }
 
-/** Creates an isolated worktree on a new branch. Never touches an existing directory. */
+/**
+ * Creates an isolated worktree on `branch`, created from `baseBranch`. When the branch
+ * already exists (a worktree removed earlier), it is checked out as is so its commits
+ * are kept. Never touches an existing directory.
+ */
 export async function createWorktree(opts: CreateWorktreeOptions): Promise<WorktreeInfo> {
   const root = assertAbsolutePath(opts.root, 'root');
   const target = assertAbsolutePath(opts.path, 'worktree path');
   if (existsSync(target)) throw new Error(`Worktree target already exists: ${target}`);
   if (!/^[\w./-]+$/.test(opts.branch) || opts.branch.startsWith('-')) throw new Error(`Invalid branch name: ${opts.branch}`);
-  await git(['worktree', 'add', '-b', opts.branch, target, opts.baseBranch], { cwd: root, timeoutMs: 120_000 });
+  if (opts.baseBranch.startsWith('-')) throw new Error(`Invalid base branch: ${opts.baseBranch}`);
+  const args = (await branchExists(root, opts.branch))
+    ? ['worktree', 'add', target, opts.branch]
+    : ['worktree', 'add', '-b', opts.branch, target, opts.baseBranch];
+  await git(args, { cwd: root, timeoutMs: 120_000 });
   const { stdout } = await git(['rev-parse', 'HEAD'], { cwd: target });
   return { path: target, branch: opts.branch, head: stdout.trim() };
 }

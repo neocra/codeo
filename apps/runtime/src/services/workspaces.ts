@@ -1,4 +1,4 @@
-import { RuntimeError, type CommandParsedParams } from '@codeo/contracts';
+import { localizedError, RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { WorkspaceRepo } from '@codeo/database';
 import type { Repository, Workspace } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
@@ -24,7 +24,7 @@ export class WorkspaceService {
 
   private async toRepository(workspaceId: string, dir: string): Promise<Repository> {
     const info = await inspectRepository(dir);
-    if (!info.isGitRepository || !info.root) throw new RuntimeError('INVALID_PARAMS', `Ce dossier n'est pas un dépôt Git: ${dir}`);
+    if (!info.isGitRepository || !info.root) throw localizedError('INVALID_PARAMS', 'repo.notGit', { path: dir }, `Ce dossier n'est pas un dépôt Git: ${dir}`);
     return {
       id: newId('repo'),
       workspaceId,
@@ -47,7 +47,7 @@ export class WorkspaceService {
       repositories.push(r);
     }
     if (input.type === 'monorepo' && repositories.length !== 1) {
-      throw new RuntimeError('INVALID_PARAMS', 'Un monorepo contient exactement un dépôt.');
+      throw localizedError('INVALID_PARAMS', 'workspace.monorepoOne', undefined, 'Un monorepo contient exactement un dépôt.');
     }
     const ws: Workspace = {
       id,
@@ -68,8 +68,8 @@ export class WorkspaceService {
   async addRepository(workspaceId: string, dir: string): Promise<Workspace> {
     const ws = await this.get(workspaceId);
     const r = await this.toRepository(ws.id, dir);
-    if (ws.repositories.some((x) => x.path === r.path)) throw new RuntimeError('CONFLICT', 'Ce dépôt est déjà dans l’espace de travail.');
-    if (ws.type === 'monorepo') throw new RuntimeError('INVALID_PARAMS', 'Un monorepo ne contient qu’un dépôt.');
+    if (ws.repositories.some((x) => x.path === r.path)) throw localizedError('CONFLICT', 'repo.duplicate', undefined, 'Ce dépôt est déjà dans l’espace de travail.');
+    if (ws.type === 'monorepo') throw localizedError('INVALID_PARAMS', 'workspace.monorepoSingle', undefined, 'Un monorepo ne contient qu’un dépôt.');
     await this.repo.insertRepository(r);
     const updated = await this.get(workspaceId);
     this.bus.publish('WorkspaceUpdated', { workspace: updated });

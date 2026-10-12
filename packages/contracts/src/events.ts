@@ -6,6 +6,7 @@ import {
   SessionEntrySchema,
   TaskSchema,
   WorkspaceSchema,
+  WorktreeSchema,
 } from '@codeo/domain';
 
 const base = { id: z.string(), at: z.string() };
@@ -21,6 +22,8 @@ export const RuntimeEventSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('TaskProgressChanged'), taskId: z.string(), progress: z.number() }),
   z.object({ ...base, type: z.literal('TaskCompleted'), task: TaskSchema }),
   z.object({ ...base, type: z.literal('TaskFailed'), task: TaskSchema, error: z.string() }),
+  z.object({ ...base, type: z.literal('WorktreeCreated'), worktree: WorktreeSchema }),
+  z.object({ ...base, type: z.literal('WorktreeRemoved'), worktreeId: z.string(), taskId: z.string().nullable() }),
   z.object({ ...base, type: z.literal('SessionCreated'), session: AgentSessionSchema }),
   z.object({ ...base, type: z.literal('SessionUpdated'), session: AgentSessionSchema }),
   z.object({ ...base, type: z.literal('SessionEntryAppended'), sessionId: z.string(), entry: SessionEntrySchema }),

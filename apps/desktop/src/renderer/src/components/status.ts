@@ -1,4 +1,4 @@
-import type { AgentSession, ApprovalRequest, Task } from '@codeo/domain';
+import type { AgentSession, ApprovalRequest, SubtaskStatus, Task } from '@codeo/domain';
 import type { Tone } from '@codeo/ui-desktop';
 import type { MessageKey } from '@codeo/i18n';
 
@@ -39,6 +39,23 @@ export function taskTone(status: Task['status']): { tone: Tone; key: MessageKey 
       return { tone: 'idle', key: 'status.draft' };
     case 'completed':
       return { tone: 'done', key: 'status.completed' };
+    case 'failed':
+      return { tone: 'error', key: 'status.failed' };
+    case 'cancelled':
+      return { tone: 'idle', key: 'status.cancelled' };
+  }
+}
+
+export function subtaskTone(status: SubtaskStatus): { tone: Tone; key: MessageKey } {
+  switch (status) {
+    case 'pending':
+      return { tone: 'idle', key: 'status.pending' };
+    case 'running':
+      return { tone: 'live', key: 'status.running' };
+    case 'waiting_approval':
+      return { tone: 'attention', key: 'status.waitingApproval' };
+    case 'completed':
+      return { tone: 'done', key: 'status.done' };
     case 'failed':
       return { tone: 'error', key: 'status.failed' };
     case 'cancelled':

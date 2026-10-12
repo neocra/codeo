@@ -36,11 +36,12 @@ export interface ChoiceProps {
   sub?: ReactNode;
   type?: 'radio' | 'checkbox' | undefined;
   name?: string | undefined;
+  disabled?: boolean | undefined;
 }
-export function Choice({ checked, onChange, label, sub, type = 'radio', name }: ChoiceProps) {
+export function Choice({ checked, onChange, label, sub, type = 'radio', name, disabled }: ChoiceProps) {
   return (
-    <label className={['cd-choice', checked && 'is-on'].filter(Boolean).join(' ')}>
-      <input type={type} checked={checked} onChange={onChange} name={name} />
+    <label className={['cd-choice', checked && 'is-on', disabled && 'is-disabled'].filter(Boolean).join(' ')} aria-disabled={disabled || undefined}>
+      <input type={type} checked={checked} onChange={onChange} name={name} disabled={disabled} />
       <span>
         {label}
         {sub ? <span className="cd-choice__sub">{sub}</span> : null}
