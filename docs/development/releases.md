@@ -38,10 +38,16 @@ without that click; `autoInstallOnAppQuit` applies a downloaded update at quit.
 
 - Windows (NSIS) and Linux (AppImage) self-update without signing.
 - **macOS requires a signed app** for self-update (Squirrel.Mac rejects unsigned bundles). Without
-  `CSC_LINK` / `CSC_KEY_PASSWORD` secrets the workflow produces unsigned builds, the app reports
-  the *manual* state and offers the download page instead. Add the Developer ID certificate as
-  secrets (and `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` plus `notarize: true` in
-  `electron-builder.yml`) to enable automatic updates on macOS.
+  `CSC_LINK` / `CSC_KEY_PASSWORD` secrets the workflow produces builds that are only **ad-hoc
+  signed** (`scripts/after-pack.cjs`): they open, but Gatekeeper asks the user to allow the app
+  once (*System Settings → Privacy & Security → Open Anyway* after the first blocked launch), and
+  the app reports the *manual* update state and offers the download page instead. Add the
+  Developer ID certificate as secrets (and `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
+  `APPLE_TEAM_ID` plus `notarize: true` in `electron-builder.yml`) to enable automatic updates on
+  macOS.
+  - Builds published before the ad-hoc signature (0.1.1) are reported as *damaged* by macOS. They
+    can be repaired by hand after copying the app to `/Applications`:
+    `xattr -dr com.apple.quarantine /Applications/Codeo.app && codesign --force --deep --sign - /Applications/Codeo.app`.
 - In development (`app.isPackaged === false`) the check reports *unsupported*.
 - `.deb` installs are updated through the package, not electron-updater.
 
