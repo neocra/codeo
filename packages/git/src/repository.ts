@@ -72,6 +72,24 @@ export async function isDirty(root: string): Promise<boolean> {
   return stdout.trim().length > 0;
 }
 
+/**
+ * What a directory says about itself: the common git dir it is linked to and its checked-out branch.
+ * `null` when the directory is not a git working tree at all (a plain folder dropped at a worktree path).
+ */
+export async function worktreeIdentity(dir: string): Promise<{ commonDir: string; branch: string | null } | null> {
+  const d = assertAbsolutePath(dir);
+  if (!existsSync(d)) return null;
+  try {
+    const { stdout } = await git(['rev-parse', '--git-common-dir'], { cwd: d });
+    const common = stdout.trim();
+    if (!common) return null;
+    const commonDir = path.isAbsolute(common) ? common : path.resolve(d, common);
+    return { commonDir, branch: await currentBranch(d) };
+  } catch {
+    return null;
+  }
+}
+
 /** Drops git's registrations of worktrees whose directories no longer exist. */
 export async function pruneWorktrees(root: string): Promise<void> {
   await git(['worktree', 'prune'], { cwd: assertAbsolutePath(root, 'root') });

@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { branchExists, createWorktree, git, inspectRepository, removeWorktree, resolveCommit } from '../src/index';
+import { branchExists, createWorktree, git, inspectRepository, removeWorktree, resolveCommit, worktreeIdentity } from '../src/index';
 
 let dir: string;
 beforeAll(async () => {
@@ -69,6 +69,21 @@ describe('worktrees', () => {
     const listed = (await inspectRepository(dir)).worktrees.map((w) => w.path.replace(/\\/g, '/'));
     expect(listed.some((p) => p.endsWith('/.worktrees/été-ñ'))).toBe(true);
     await removeWorktree(dir, wt, { force: true });
+  });
+
+  it('tells a real worktree from a plain folder at a worktree path', async () => {
+    const wt = path.join(dir, '.worktrees', 'identity');
+    await createWorktree({ root: dir, path: wt, branch: 'feature/identity', baseBranch: 'main' });
+    const id = await worktreeIdentity(wt);
+    expect(id?.branch).toBe('feature/identity');
+    /* Canonical paths: macOS maps /tmp to /private/tmp. */
+    expect(realpathSync(id!.commonDir)).toBe(realpathSync((await worktreeIdentity(dir))!.commonDir));
+    rmSync(wt, { recursive: true, force: true });
+    mkdirSync(wt, { recursive: true });
+    writeFileSync(path.join(wt, 'intrus.txt'), 'x');
+    expect(await worktreeIdentity(wt)).toBeNull();
+    rmSync(wt, { recursive: true, force: true });
+    await git(['worktree', 'prune'], { cwd: dir });
   });
 
   it('rejects dangerous branch names', async () => {

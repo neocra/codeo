@@ -377,6 +377,23 @@ describe('worktree recovery', () => {
     await runtime.services.worktrees.remove(again.id, { force: true });
   });
 
+  it('refuses a plain folder that replaced a registered worktree directory', async () => {
+    const [ws] = await client.request('workspaces.list', {});
+    const task = await runtime.services.tasks.create({ workspaceId: ws!.id, title: 'Remplacé', objective: '', ticketKey: null, repositoryIds: [], provider: 'claude-code', role: 'developer', model: null, orchestration: 'single', isolation: 'worktree', subtasks: [] });
+    const sub = task.subtasks[0]!;
+    const repoId = ws!.repositories[0]!.id;
+    const wt = await runtime.services.worktrees.ensureForSubtask(task, sub, repoId);
+    /* Deleted outside Codeo and replaced by unrelated files: git still registers the path, the folder is not a worktree. */
+    rmSync(wt.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    mkdirSync(wt.path, { recursive: true });
+    writeFileSync(path.join(wt.path, 'intrus.txt'), 'x');
+    await expect(runtime.services.worktrees.ensureForSubtask(task, sub, repoId)).rejects.toThrow(/n’est plus le worktree/);
+    await expect(runtime.services.worktrees.assertIntact(wt.id)).rejects.toThrow(/n’est plus le worktree/);
+    await expect(runtime.services.worktrees.remove(wt.id, { force: true })).rejects.toThrow(/n’est plus le worktree/);
+    rmSync(wt.path, { recursive: true, force: true });
+    await runtime.services.worktrees.remove(wt.id, { force: true });
+  });
+
   it('adopts a worktree left by a run that died before persisting it, and refuses a foreign folder', async () => {
     const [ws] = await client.request('workspaces.list', {});
     const task = await runtime.services.tasks.create({ workspaceId: ws!.id, title: 'Adopter', objective: '', ticketKey: null, repositoryIds: [], provider: 'claude-code', role: 'developer', model: null, orchestration: 'single', isolation: 'worktree', subtasks: [] });

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { localizedError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
-import { createWorktree, isDirty, listWorktrees, pruneWorktrees, removeWorktree, resolveCommit } from '@codeo/git';
+import { createWorktree, isDirty, listWorktrees, pruneWorktrees, removeWorktree, resolveCommit, worktreeIdentity } from '@codeo/git';
 import { newId, type KeyedLock, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { WorkspaceService } from './workspaces';
@@ -80,7 +80,15 @@ export class WorktreeService {
       }
     };
     const target = real(dir);
-    return (await listWorktrees(repositoryPath).catch(() => [])).find((w) => real(w.path) === target) ?? null;
+    const registered = (await listWorktrees(repositoryPath).catch(() => [])).find((w) => real(w.path) === target) ?? null;
+    if (!registered) return null;
+    /* The registration can be stale (directory deleted and replaced): the directory itself must be a working tree
+       linked to this repository and checked out on the registered branch. */
+    const [identity, repositoryIdentity] = await Promise.all([worktreeIdentity(dir), worktreeIdentity(repositoryPath)]);
+    if (!identity || !repositoryIdentity) return null;
+    if (real(identity.commonDir) !== real(repositoryIdentity.commonDir)) return null;
+    if (identity.branch !== registered.branch) return null;
+    return registered;
   }
 
   private async baseRef(repository: Repository): Promise<string> {
