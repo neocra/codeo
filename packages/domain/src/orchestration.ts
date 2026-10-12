@@ -80,7 +80,8 @@ export function aggregateTaskStatus(plan: Plan): TaskStatus {
   if (statuses.length > 0 && completed === statuses.length) return 'review';
   if (plan.orchestration === 'best-of-n') return completed > 0 ? 'review' : statuses.includes('failed') ? 'failed' : 'cancelled';
   if (statuses.includes('failed')) return 'failed';
-  return completed > 0 ? 'review' : 'cancelled';
+  /* Every step of a plan is required: a settled cancellation cancels the task (partial success is Best-of-N only). */
+  return 'cancelled';
 }
 
 /** 0–90: the last 10 % belong to the human review. */
