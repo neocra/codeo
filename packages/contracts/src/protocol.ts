@@ -69,14 +69,20 @@ export class RuntimeError extends Error {
 /** Stable identifier carried in `details` so clients can translate the error; `message` stays the French fallback. */
 export interface LocalizedErrorDetails {
   key: string;
-  params?: Record<string, string | number>;
+  params?: Record<string, string | number> | undefined;
 }
 
 export function localizedError(code: ErrorCode, key: string, params: Record<string, string | number> | undefined, message: string): RuntimeError {
   return new RuntimeError(code, message, { key, ...(params ? { params } : {}) } satisfies LocalizedErrorDetails);
 }
 
+const LocalizedErrorDetailsSchema = z.object({
+  key: z.string().min(1),
+  params: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+});
+
+/** `details` arrives from the wire untyped: only a well-formed key/params pair is handed to the translator. */
 export function localizedErrorDetails(details: unknown): LocalizedErrorDetails | null {
-  if (!details || typeof details !== 'object' || typeof (details as { key?: unknown }).key !== 'string') return null;
-  return details as LocalizedErrorDetails;
+  const parsed = LocalizedErrorDetailsSchema.safeParse(details);
+  return parsed.success ? parsed.data : null;
 }

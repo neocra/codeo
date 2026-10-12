@@ -77,11 +77,12 @@ export async function pruneWorktrees(root: string): Promise<void> {
   await git(['worktree', 'prune'], { cwd: assertAbsolutePath(root, 'root') });
 }
 
+/** `-z` keeps paths verbatim (without it, git C-quotes non-ASCII paths such as a user profile with accents). */
 export async function listWorktrees(root: string): Promise<WorktreeInfo[]> {
-  const { stdout } = await git(['worktree', 'list', '--porcelain'], { cwd: root });
+  const { stdout } = await git(['worktree', 'list', '--porcelain', '-z'], { cwd: root });
   const out: WorktreeInfo[] = [];
   let cur: Partial<WorktreeInfo> = {};
-  for (const line of stdout.split('\n')) {
+  for (const line of stdout.split('\0')) {
     if (line.startsWith('worktree ')) cur = { path: line.slice(9), branch: null };
     else if (line.startsWith('HEAD ')) cur.head = line.slice(5);
     else if (line.startsWith('branch ')) cur.branch = line.slice(7).replace(/^refs\/heads\//, '');
