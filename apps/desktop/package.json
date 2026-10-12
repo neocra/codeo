@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "description": "Codeo Desktop \u2014 orchestrate AI coding agents.",
+  "author": "Neocra",
+  "homepage": "https://github.com/neocra/codeo",
   "main": "./out/main/index.js",
   "scripts": {
     "predev": "pnpm --filter @codeo/runtime build",

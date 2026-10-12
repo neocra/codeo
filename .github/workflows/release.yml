@@ -28,10 +28,6 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       GH_TOKEN: ${{ github.token }}
-      # No signing identity in CI unless secrets are configured: builds are unsigned (see docs/development/releases.md).
-      CSC_IDENTITY_AUTO_DISCOVERY: false
-      CSC_LINK: ${{ secrets.CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
       # The macOS job ships arm64 and x64 apps from one runtime bundle: fetch both architectures' native packages.
       CODEO_RUNTIME_EXTRA_ARCH: ${{ matrix.target == 'mac' && 'x64,arm64' || '' }}
@@ -50,6 +46,24 @@ jobs:
       - name: Set app version from tag
         run: node apps/desktop/scripts/set-version.mjs "$TAG"
         shell: bash
+      # Signing is opt-in through the CSC_LINK / CSC_KEY_PASSWORD secrets (see docs/development/releases.md).
+      # They are exported only when set: an empty CSC_LINK makes electron-builder look for a certificate
+      # file at the project directory and abort ("not a file"). Without a certificate, identity
+      # auto-discovery is disabled so the macOS job produces an unsigned app instead of failing.
+      - name: Configure code signing
+        shell: bash
+        env:
+          SIGNING_CERTIFICATE: ${{ secrets.CSC_LINK }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_CERTIFICATE" ]; then
+            echo "CSC_LINK=$SIGNING_CERTIFICATE" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=$SIGNING_CERTIFICATE_PASSWORD" >> "$GITHUB_ENV"
+            echo "Code signing enabled."
+          else
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "No signing certificate configured: the build is unsigned."
+          fi
       - name: Build and package
         run: pnpm --filter @codeo/desktop package:${{ matrix.target }}
       - name: Upload assets to the release
