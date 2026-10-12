@@ -22,10 +22,19 @@ import {
  * a remote caller needs. Desktop (local, trusted) callers hold every scope; paired
  * mobile devices receive a subset at pairing time.
  */
-export const CommandScopeSchema = z.enum(['read', 'session:write', 'approval:decide', 'workspace:admin']);
+export const CommandScopeSchema = z.enum([
+  'read',
+  'session:write',
+  'approval:decide',
+  'workspace:admin',
+]);
 export type CommandScope = z.infer<typeof CommandScopeSchema>;
 
-const define = <P extends z.ZodTypeAny, R extends z.ZodTypeAny>(params: P, result: R, scope: CommandScope) => ({
+const define = <P extends z.ZodTypeAny, R extends z.ZodTypeAny>(
+  params: P,
+  result: R,
+  scope: CommandScope,
+) => ({
   params,
   result,
   scope,
@@ -40,7 +49,9 @@ export const RepositoryInspectionSchema = z.object({
   defaultBranch: z.string().nullable(),
   remoteUrl: z.string().nullable(),
   dirty: z.boolean(),
-  worktrees: z.array(z.object({ path: z.string(), branch: z.string().nullable(), head: z.string() })),
+  worktrees: z.array(
+    z.object({ path: z.string(), branch: z.string().nullable(), head: z.string() }),
+  ),
 });
 export type RepositoryInspection = z.infer<typeof RepositoryInspectionSchema>;
 
@@ -79,9 +90,17 @@ export type SubtaskPlan = z.infer<typeof SubtaskPlanSchema>;
 export const commands = {
   'runtime.info': define(z.object({}), RuntimeInfoSchema, 'read'),
 
-  'providers.list': define(z.object({ refresh: z.boolean().default(false) }), z.array(ProviderStatusSchema), 'read'),
+  'providers.list': define(
+    z.object({ refresh: z.boolean().default(false) }),
+    z.array(ProviderStatusSchema),
+    'read',
+  ),
 
-  'repositories.inspect': define(z.object({ path: z.string().min(1) }), RepositoryInspectionSchema, 'workspace:admin'),
+  'repositories.inspect': define(
+    z.object({ path: z.string().min(1) }),
+    RepositoryInspectionSchema,
+    'workspace:admin',
+  ),
 
   'workspaces.list': define(z.object({}), z.array(WorkspaceSchema), 'read'),
   'workspaces.create': define(
@@ -104,7 +123,11 @@ export const commands = {
     WorkspaceSchema,
     'workspace:admin',
   ),
-  'workspaces.delete': define(z.object({ workspaceId: IdSchema }), z.object({ deleted: z.boolean() }), 'workspace:admin'),
+  'workspaces.delete': define(
+    z.object({ workspaceId: IdSchema }),
+    z.object({ deleted: z.boolean() }),
+    'workspace:admin',
+  ),
 
   'tasks.list': define(z.object({ workspaceId: IdSchema.optional() }), z.array(TaskSchema), 'read'),
   'tasks.get': define(z.object({ taskId: IdSchema }), TaskSchema, 'read'),
@@ -162,7 +185,6 @@ export const commands = {
     z.object({
       workspaceId: IdSchema,
       repositoryId: IdSchema.nullable().default(null),
-      taskId: IdSchema.nullable().default(null),
       provider: AgentProviderIdSchema,
       role: AgentRoleSchema.default('developer'),
       title: z.string().max(200).optional(),
@@ -180,7 +202,10 @@ export const commands = {
   'sessions.cancel': define(z.object({ sessionId: IdSchema }), AgentSessionSchema, 'session:write'),
 
   'approvals.list': define(
-    z.object({ status: ApprovalRequestSchema.shape.status.optional(), workspaceId: IdSchema.optional() }),
+    z.object({
+      status: ApprovalRequestSchema.shape.status.optional(),
+      workspaceId: IdSchema.optional(),
+    }),
     z.array(ApprovalRequestSchema),
     'read',
   ),

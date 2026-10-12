@@ -210,7 +210,7 @@ export class SessionService {
   }
 
   async start(
-    input: CommandParsedParams<'sessions.start'>,
+    input: CommandParsedParams<'sessions.start'> & { taskId?: string | null },
     placement?: SessionPlacement,
   ): Promise<AgentSession> {
     const ws = await this.workspaces.get(input.workspaceId);
@@ -219,7 +219,7 @@ export class SessionService {
     const session: AgentSession = {
       id: newId('ses'),
       workspaceId: ws.id,
-      taskId: input.taskId,
+      taskId: input.taskId ?? null,
       subtaskId: placement?.subtaskId ?? null,
       repositoryId: input.repositoryId ?? ws.repositories[0]?.id ?? null,
       worktreeId: placement?.worktreeId ?? null,
@@ -242,8 +242,18 @@ export class SessionService {
       : this.launch(session, input.prompt);
   }
 
-  /** Starts (or resumes) the provider process behind a session and sends the prompt. */
+  /** Starts (or resumes) the provider process behind a session and sends the prompt — the whole bootstrap sits in the shutdown barrier. */
   private async launch(session: AgentSession, prompt: string): Promise<AgentSession> {
+    const launching = this.launchBootstrap(session, prompt);
+    this.inflight.add(launching);
+    try {
+      return await launching;
+    } finally {
+      this.inflight.delete(launching);
+    }
+  }
+
+  private async launchBootstrap(session: AgentSession, prompt: string): Promise<AgentSession> {
     if (!existsSync(session.cwd)) {
       const message = `Le dossier de travail de cette session n’existe plus (${session.cwd}) : le worktree a été supprimé.`;
       /* Leave a terminal state behind, as the provider-unavailable path does, so recovery never resumes it;
@@ -324,7 +334,6 @@ export class SessionService {
       },
       logger: this.log,
     });
-    this.inflight.add(starting);
     try {
       live.handle = await starting;
     } catch (err) {
@@ -334,9 +343,34 @@ export class SessionService {
         err instanceof Error ? err.message : String(err),
       );
       throw new RuntimeError('PROVIDER_UNAVAILABLE', failed.error ?? 'Échec du démarrage.');
-    } finally {
-      this.inflight.delete(starting);
     }
+    /* A client may have cancelled the session while the provider was starting (it was not live yet): honour it.
+       Resuming an already cancelled/completed session is legitimate — only a status that changed during the start counts. */
+    const persisted = await this.get(sessionId);
+    const changedDuringStart = persisted.status !== session.status;
+    if (
+      changedDuringStart &&
+      (persisted.status === 'cancelled' ||
+        persisted.status === 'completed' ||
+        persisted.status === 'failed')
+    ) {
+      live.interrupting = true;
+      await live.handle
+        .close()
+        .catch((e) =>
+          this.log.warn('could not close a provider started for a cancelled session', {
+            sessionId,
+            err: String(e),
+          }),
+        );
+      throw localizedError(
+        'CONFLICT',
+        'session.cancelledDuringStart',
+        undefined,
+        'La session a été annulée pendant son démarrage.',
+      );
+    }
+    current = persisted;
     this.live.set(session.id, live);
     /* From here a provider process exists: any failure before the first turn is accepted must close it, so a
        retry never finds a live but unrecorded agent in the worktree. */
