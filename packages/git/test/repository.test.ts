@@ -79,10 +79,15 @@ describe('worktrees', () => {
     /* Canonical paths: macOS maps /tmp to /private/tmp. */
     expect(realpathSync(id!.commonDir)).toBe(realpathSync((await worktreeIdentity(dir))!.commonDir));
     rmSync(wt, { recursive: true, force: true });
+    /* A plain folder inside the repository reports the repository itself (branch main), never the worktree's branch… */
     mkdirSync(wt, { recursive: true });
     writeFileSync(path.join(wt, 'intrus.txt'), 'x');
-    expect(await worktreeIdentity(wt)).toBeNull();
+    expect((await worktreeIdentity(wt))?.branch).toBe('main');
     rmSync(wt, { recursive: true, force: true });
+    /* …and a plain folder outside any repository is not a working tree at all. */
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'codeo-plain-'));
+    expect(await worktreeIdentity(outside)).toBeNull();
+    rmSync(outside, { recursive: true, force: true });
     await git(['worktree', 'prune'], { cwd: dir });
   });
 
