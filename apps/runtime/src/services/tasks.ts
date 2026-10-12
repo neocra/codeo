@@ -325,9 +325,12 @@ export class TaskService {
             /* The failed send left a live handle (close failed too): never launch a second agent beside it. */
             throw localizedError('CONFLICT', 'task.stopPending', { steps: sub.title }, `Un agent est encore actif (${sub.title}) : réessayez la mise en pause avant de reprendre.`);
           }
-          /* The provider conversation cannot be resumed: start the subtask over, in the same worktree. */
+          /* The provider conversation cannot be resumed: start the subtask over, in the same worktree. The detachment
+             and a fresh attempt boundary are persisted before any replacement starts, so a crash in between leaves
+             recovery adopting the replacement rather than the old session. */
           this.log.warn('subtask restarted instead of resumed', { taskId, subtaskId: sub.id, err: String(err) });
-          task = patchSubtask(task, sub.id, { status: 'pending', sessionId: null });
+          task = patchSubtask(task, sub.id, { status: 'pending', sessionId: null, attemptStartedAt: new Date().toISOString() });
+          await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
         }
       }
       return (await this.advance(task)).task;

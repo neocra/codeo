@@ -21,19 +21,21 @@ export function TaskDetail({ task }: { task: Task }) {
   const worktrees = useWorktrees(task.id);
   const sessions = useSessions(task.workspaceId);
   /* A pause that could not stop every agent leaves sessions active: the runtime expects the pause to be retried. */
-  /* A successful pause cancels the sessions; any still running, waiting or idle session of an active step means the stop failed. */
+  /* A successful pause stops every session of the task (idle ones of finished steps too); any still running, waiting or idle
+     session means the stop failed and resume would be refused until it is retried. */
   const stopPending =
     task.status === 'paused' &&
-    task.subtasks.some(
-      (s) =>
-        (s.status === 'running' || s.status === 'waiting_approval') &&
-        s.sessionId &&
-        (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval' || x.status === 'idle')),
-    );
+    task.subtasks.some((s) => s.sessionId && (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval' || x.status === 'idle')));
   /* A cancel whose provider close failed persisted `cancelled` but left the handle live: offer the retry (tasks.cancel is idempotent). */
   const cancelStopPending =
     task.status === 'cancelled' &&
     task.subtasks.some((s) => s.sessionId && (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval' || x.status === 'idle')));
+  /* Parallel lanes are independent: a finished lane stays removable while another runs; shared worktrees follow the task. */
+  const laneBusy = (w: Worktree) => {
+    const owner = w.subtaskId ? task.subtasks.find((s) => s.id === w.subtaskId) : undefined;
+    if (owner) return owner.status === 'running' || owner.status === 'waiting_approval';
+    return ['running', 'waiting_approval', 'queued'].includes(task.status);
+  };
   const [error, setError] = useState<string | null>(null);
   const onError = (e: unknown) => setError(describeError(e, t));
   /* A new attempt clears the previous failure so a successful retry never keeps a stale banner. */
@@ -89,7 +91,7 @@ export function TaskDetail({ task }: { task: Task }) {
         {(worktrees.data ?? []).length ? (
           <div className="cd-stack cd-stack--sm">
             {(worktrees.data ?? []).map((w) => (
-              <WorktreeRow key={w.id} worktree={w} busy={['running', 'waiting_approval', 'queued'].includes(task.status)} />
+              <WorktreeRow key={w.id} worktree={w} busy={laneBusy(w)} />
             ))}
           </div>
         ) : null}
