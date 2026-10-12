@@ -427,7 +427,13 @@ export class SessionService {
       const message = err instanceof Error ? err.message : String(err);
       if (live) {
         live.interrupting = true;
-        await live.handle.close().catch((e) => this.log.warn('provider close failed on worktree mismatch', { id: session.id, err: String(e) }));
+        try {
+          await live.handle.close();
+        } catch (closeErr) {
+          /* The provider may still be running: keep it tracked so a stop can be retried; nothing is terminalized yet. */
+          this.log.error('provider close failed on worktree mismatch', { id: session.id, err: String(closeErr) });
+          throw localizedError('CONFLICT', 'session.stopPending', undefined, 'L’arrêt de cette session n’a pas abouti : réessayez l’arrêt avant d’envoyer un message.');
+        }
         await live.chain.catch(() => undefined);
         await this.finalizeStreaming(session, live);
         this.live.delete(session.id);
@@ -461,7 +467,8 @@ export class SessionService {
     const entry = { kind: 'system' as const, id: newId('ent'), sessionId, seq, at: new Date().toISOString(), level: 'info' as const, key: reason.key, params: reason.params ?? null, text: reason.text };
     await this.repo.appendEntry(entry);
     this.bus.publish('SessionEntryAppended', { sessionId, entry });
-    return this.setStatus(session, 'completed');
+    const terminal = canTransitionSession(session.status, 'completed') ? 'completed' : canTransitionSession(session.status, 'failed') ? 'failed' : null;
+    return terminal ? this.setStatus(session, terminal, reason.text) : session;
   }
 
   /** Runs `fn` under the session's worktree lock (none when the session is not in a worktree). */

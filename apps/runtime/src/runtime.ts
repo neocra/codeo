@@ -137,8 +137,9 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
       /* Same lock as session launch/send into this directory (keyed by path: a recreated lane keeps it). */
       return worktreeLocks.run(laneKey(target.path), async () => {
         const wt = await worktrees.get(p.worktreeId);
-        /* A working agent keeps its worktree; idle sessions are closed with it (they cannot resume without the directory). */
-        const owners = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => (s.worktreeId === wt.id || laneKey(s.cwd) === laneKey(wt.path)) && sessions.isLive(s.id));
+        /* Every session of this directory is affected (a previous attempt may have suspended some); only the live ones can be busy. */
+        const associated = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => s.worktreeId === wt.id || laneKey(s.cwd) === laneKey(wt.path));
+        const owners = associated.filter((s) => sessions.isLive(s.id));
         if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
           throw localizedError('CONFLICT', 'worktree.agentBusy', undefined, 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
         }
@@ -149,7 +150,10 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
             for (const s of owners) await sessions.suspendUnlocked(s.id);
           },
         });
-        for (const s of owners) await sessions.closeSuspendedUnlocked(s.id, { key: 'worktreeRemoved', text: 'Session fermée : le worktree a été supprimé.' });
+        const terminal = new Set(['completed', 'failed', 'cancelled']);
+        for (const s of associated) {
+          if (!terminal.has(s.status)) await sessions.closeSuspendedUnlocked(s.id, { key: 'worktreeRemoved', text: 'Session fermée : le worktree a été supprimé.' });
+        }
         return { removed };
       });
     },
