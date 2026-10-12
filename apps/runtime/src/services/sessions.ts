@@ -107,11 +107,18 @@ export class SessionService {
   }
 
   async init(): Promise<void> {
-    /* Sessions that had a provider when the runtime died — working or idle — are marked disconnected (resumable),
-       exactly as a graceful shutdown does; nothing persisted as idle can still own a handle after a restart. */
+    /* Sessions that were working when the runtime died are marked disconnected (resumable). Idle ones keep their
+       completed turn visible until the task scheduler has reconciled it: see disconnectIdle(). */
     for (const s of await this.repo.list({
-      statuses: ['running', 'waiting_approval', 'created', 'idle'],
+      statuses: ['running', 'waiting_approval', 'created'],
     })) {
+      await this.setStatus(s, 'disconnected', 'Runtime redémarré pendant la session.');
+    }
+  }
+
+  /** Boot step after task reconciliation: an idle session has no provider any more, exactly as after a graceful shutdown. */
+  async disconnectIdle(): Promise<void> {
+    for (const s of await this.repo.list({ statuses: ['idle'] })) {
       await this.setStatus(s, 'disconnected', 'Runtime redémarré pendant la session.');
     }
   }

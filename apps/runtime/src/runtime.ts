@@ -85,6 +85,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   await approvals.init();
   await sessions.init();
   await tasks.init();
+  /* Only once the tasks have recorded the idle sessions' completed turns do those sessions become disconnected. */
+  await sessions.disconnectIdle();
 
   const info: RuntimeInfo = {
     version: RUNTIME_VERSION,
