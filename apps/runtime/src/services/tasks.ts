@@ -96,7 +96,9 @@ export class TaskService {
       if (sub.sessionId && (sub.status === 'running' || sub.status === 'waiting_approval')) {
         const current = sessions.find((s) => s.id === sub.sessionId);
         const outcome = current && current.status !== 'disconnected' && current.status !== 'created' ? SUBTASK_STATUS_FROM_SESSION[current.status] : undefined;
-        if (current && outcome && outcome !== sub.status && outcome !== 'running' && outcome !== 'waiting_approval') {
+        /* pause() cancels the sessions on purpose while keeping their subtasks active for resume(): that cancellation is expected. */
+        const expectedPauseCancel = task.status === 'paused' && outcome === 'cancelled';
+        if (current && outcome && !expectedPauseCancel && outcome !== sub.status && outcome !== 'running' && outcome !== 'waiting_approval') {
           this.log.warn('subtask outcome recovered from its session', { taskId: task.id, subtaskId: sub.id, outcome });
           task = patchSubtask(task, sub.id, { status: outcome, error: outcome === 'failed' ? (current.error ?? sub.error) : sub.error });
           changed = true;
@@ -109,7 +111,7 @@ export class TaskService {
       if (!orphan) continue;
       this.log.warn('reattaching orphaned session to its subtask', { taskId: task.id, subtaskId: sub.id, sessionId: orphan.id });
       /* The session's persisted outcome wins: finished work is not rerun, a disconnected agent is resumable work. */
-      const recovered = orphan.status === 'disconnected' || orphan.status === 'created' ? 'running' : (SUBTASK_STATUS_FROM_SESSION[orphan.status] ?? 'running');
+      const recovered = orphan.status === 'disconnected' || orphan.status === 'created' || (task.status === 'paused' && orphan.status === 'cancelled') ? 'running' : (SUBTASK_STATUS_FROM_SESSION[orphan.status] ?? 'running');
       task = patchSubtask(task, sub.id, { status: recovered, sessionId: orphan.id, worktreeId: orphan.worktreeId ?? sub.worktreeId, error: recovered === 'failed' ? (orphan.error ?? sub.error) : sub.error });
       changed = true;
     }
