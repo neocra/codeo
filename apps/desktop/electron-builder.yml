@@ -48,6 +48,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   perMachine: false
 linux:
+  # The package name (@codeo/desktop) is not a valid binary name: AppImage and deb refuse it.
+  executableName: codeo
   target: [AppImage, deb]
   category: Development
   maintainer: Neocra
