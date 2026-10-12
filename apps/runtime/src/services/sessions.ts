@@ -107,9 +107,10 @@ export class SessionService {
   }
 
   async init(): Promise<void> {
-    /* Sessions that were running when the runtime died are marked disconnected (resumable). */
+    /* Sessions that had a provider when the runtime died — working or idle — are marked disconnected (resumable),
+       exactly as a graceful shutdown does; nothing persisted as idle can still own a handle after a restart. */
     for (const s of await this.repo.list({
-      statuses: ['running', 'waiting_approval', 'created'],
+      statuses: ['running', 'waiting_approval', 'created', 'idle'],
     })) {
       await this.setStatus(s, 'disconnected', 'Runtime redémarré pendant la session.');
     }
