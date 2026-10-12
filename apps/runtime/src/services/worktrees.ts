@@ -189,7 +189,8 @@ export class WorktreeService {
       await opts.beforeRemove?.();
       /* Directory gone (deleted outside Codeo): clear git's stale registration so the branch can be reattached later. */
       const repository = (await this.workspaces.get(worktree.workspaceId).catch(() => null))?.repositories.find((r) => r.id === worktree.repositoryId);
-      if (repository) await pruneWorktrees(repository.path);
+      /* A repository that was itself deleted or moved cannot be pruned; its stale metadata must not block removal. */
+      if (repository && existsSync(repository.path)) await pruneWorktrees(repository.path);
     }
     await this.repo.delete(id);
     this.bus.publish('WorktreeRemoved', { worktreeId: id, taskId: worktree.taskId });

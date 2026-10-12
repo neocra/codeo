@@ -197,17 +197,7 @@ export class SessionService {
       if (terminal) await this.setStatus(session, terminal, message);
       throw localizedError('CONFLICT', 'session.dirGone', { path: session.cwd }, message);
     }
-    if (session.worktreeId && this.worktreeValidator) {
-      try {
-        await this.worktreeValidator(session.worktreeId);
-      } catch (err) {
-        /* The directory is not this session's worktree any more: close the session rather than run an agent in a foreign folder. */
-        const message = err instanceof Error ? err.message : String(err);
-        const terminal = canTransitionSession(session.status, 'completed') ? 'completed' : canTransitionSession(session.status, 'failed') ? 'failed' : null;
-        if (terminal) await this.setStatus(session, terminal, message);
-        throw err instanceof RuntimeError ? err : new RuntimeError('CONFLICT', message);
-      }
-    }
+    await this.assertWorktreeIntact(session, null);
     if (this.closed) throw localizedError('CONFLICT', 'runtime.stopping', undefined, 'Le runtime s’arrête : aucune session ne peut démarrer.');
     const provider = this.providers.get(session.provider);
     const status = this.providers.status(session.provider);
@@ -394,6 +384,8 @@ export class SessionService {
       return this.launch(session, text);
     }
     if (session.status === 'waiting_approval') throw localizedError('CONFLICT', 'session.awaitingApproval', undefined, 'Répondez d’abord à la demande d’approbation.');
+    /* The directory may have been replaced since the provider started: check before every turn, under the path lock. */
+    await this.assertWorktreeIntact(session, live);
     if (live.interrupting) {
       /* A stop that could not close the provider is still pending: no new turn until it is retried, otherwise a later
          provider failure would be misread as the interruption. */
@@ -421,6 +413,55 @@ export class SessionService {
       live.streaming.delete(id);
       await this.update(session, { ...entry, streaming: false });
     }
+  }
+
+  /**
+   * A worktree session may only run while git still knows its directory as that worktree (see WorktreeService.assertIntact).
+   * Otherwise the session is closed (provider too, when live) rather than letting an agent work in a replaced folder.
+   */
+  private async assertWorktreeIntact(session: AgentSession, live: Live | null): Promise<void> {
+    if (!session.worktreeId || !this.worktreeValidator) return;
+    try {
+      await this.worktreeValidator(session.worktreeId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (live) {
+        live.interrupting = true;
+        await live.handle.close().catch((e) => this.log.warn('provider close failed on worktree mismatch', { id: session.id, err: String(e) }));
+        await live.chain.catch(() => undefined);
+        await this.finalizeStreaming(session, live);
+        this.live.delete(session.id);
+      }
+      const latest = await this.get(session.id);
+      const terminal = canTransitionSession(latest.status, 'completed') ? 'completed' : canTransitionSession(latest.status, 'failed') ? 'failed' : null;
+      if (terminal) await this.setStatus(latest, terminal, message);
+      throw err instanceof RuntimeError ? err : new RuntimeError('CONFLICT', message);
+    }
+  }
+
+  /** Closes the provider of an idle session without changing its status (a removal in progress may still fail). */
+  async suspendUnlocked(sessionId: string): Promise<void> {
+    const session = await this.get(sessionId);
+    const live = this.live.get(sessionId);
+    if (!live) return;
+    if (session.status === 'running' || session.status === 'waiting_approval') {
+      throw localizedError('CONFLICT', 'session.agentBusy', undefined, 'Un agent travaille encore dans cette session : arrêtez-la d’abord.');
+    }
+    live.interrupting = true;
+    await live.handle.close();
+    await live.chain.catch(() => undefined);
+    await this.finalizeStreaming(session, live);
+    this.live.delete(sessionId);
+  }
+
+  /** Records the outcome of a completed removal on a session suspended for it. */
+  async closeSuspendedUnlocked(sessionId: string, reason: SystemNote): Promise<AgentSession> {
+    const session = await this.get(sessionId);
+    const seq = (await this.repo.lastSeq(sessionId)) + 1;
+    const entry = { kind: 'system' as const, id: newId('ent'), sessionId, seq, at: new Date().toISOString(), level: 'info' as const, key: reason.key, params: reason.params ?? null, text: reason.text };
+    await this.repo.appendEntry(entry);
+    this.bus.publish('SessionEntryAppended', { sessionId, entry });
+    return this.setStatus(session, 'completed');
   }
 
   /** Runs `fn` under the session's worktree lock (none when the session is not in a worktree). */

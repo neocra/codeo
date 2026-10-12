@@ -142,12 +142,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
         if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
           throw localizedError('CONFLICT', 'worktree.agentBusy', undefined, 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
         }
+        /* Idle owners are only suspended (provider closed, status kept) until git has actually removed the directory. */
         const removed = await worktrees.remove(p.worktreeId, {
           force: p.force,
           beforeRemove: async () => {
-            for (const s of owners) await sessions.releaseUnlocked(s.id, { key: 'worktreeRemoved', text: 'Session fermée : le worktree a été supprimé.' });
+            for (const s of owners) await sessions.suspendUnlocked(s.id);
           },
         });
+        for (const s of owners) await sessions.closeSuspendedUnlocked(s.id, { key: 'worktreeRemoved', text: 'Session fermée : le worktree a été supprimé.' });
         return { removed };
       });
     },
