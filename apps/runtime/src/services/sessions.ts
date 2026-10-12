@@ -340,8 +340,10 @@ export class SessionService {
     try {
       live.handle = await starting;
     } catch (err) {
+      /* Reloaded: a cancel that landed while the provider was starting must not be overwritten by `failed`
+         (setStatus ignores the illegal cancelled → failed transition). */
       const failed = await this.setStatus(
-        current,
+        await this.get(sessionId),
         'failed',
         err instanceof Error ? err.message : String(err),
       );
