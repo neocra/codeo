@@ -65,8 +65,9 @@ describe('worktrees', () => {
   it('lists worktrees whose paths contain non-ASCII characters verbatim', async () => {
     const wt = path.join(dir, '.worktrees', 'été-ñ');
     await createWorktree({ root: dir, path: wt, branch: 'feature/accents', baseBranch: 'main' });
-    const listed = (await inspectRepository(dir)).worktrees.map((w) => w.path);
-    expect(listed.some((p) => p.endsWith(path.join('.worktrees', 'été-ñ')))).toBe(true);
+    /* git prints forward slashes on every platform; compare separator-agnostically. */
+    const listed = (await inspectRepository(dir)).worktrees.map((w) => w.path.replace(/\\/g, '/'));
+    expect(listed.some((p) => p.endsWith('/.worktrees/été-ñ'))).toBe(true);
     await removeWorktree(dir, wt, { force: true });
   });
 
