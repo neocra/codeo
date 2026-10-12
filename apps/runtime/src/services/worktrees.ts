@@ -2,8 +2,22 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { localizedError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
-import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
-import { createWorktree, forgetMissingWorktree, isDirty, listWorktrees, removeWorktree, resolveCommit, worktreeIdentity } from '@codeo/git';
+import {
+  sharesWorktree,
+  type Repository,
+  type Subtask,
+  type Task,
+  type Worktree,
+} from '@codeo/domain';
+import {
+  createWorktree,
+  forgetMissingWorktree,
+  isDirty,
+  listWorktrees,
+  removeWorktree,
+  resolveCommit,
+  worktreeIdentity,
+} from '@codeo/git';
 import { newId, type KeyedLock, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { WorkspaceService } from './workspaces';
@@ -43,7 +57,10 @@ export function branchSlug(text: string): string {
 }
 
 /** `codeo/<slug>-<task short id>`, plus `-<step>` when every subtask has its own worktree. */
-export function worktreeBranch(task: Pick<Task, 'id' | 'title' | 'ticketKey'>, sub: Pick<Subtask, 'order'> | null): string {
+export function worktreeBranch(
+  task: Pick<Task, 'id' | 'title' | 'ticketKey'>,
+  sub: Pick<Subtask, 'order'> | null,
+): string {
   const short = task.id.replace(/^[a-z]+_/, '').slice(0, 8);
   const base = `codeo/${branchSlug(task.ticketKey ? `${task.ticketKey} ${task.title}` : task.title)}-${short}`;
   return sub ? `${base}-${sub.order + 1}` : base;
@@ -66,21 +83,32 @@ export class WorktreeService {
     readonly locks: KeyedLock,
   ) {}
 
-  async list(filter: { workspaceId?: string | undefined; taskId?: string | undefined }): Promise<Worktree[]> {
+  async list(filter: {
+    workspaceId?: string | undefined;
+    taskId?: string | undefined;
+  }): Promise<Worktree[]> {
     const rows = await this.repo.list(filter);
-    return Promise.all(rows.map(async (w) => ({ ...w, dirty: existsSync(w.path) ? await isDirty(w.path).catch(() => false) : false })));
+    return Promise.all(
+      rows.map(async (w) => ({
+        ...w,
+        dirty: existsSync(w.path) ? await isDirty(w.path).catch(() => false) : false,
+      })),
+    );
   }
 
   async get(id: string): Promise<Worktree> {
     const w = await this.repo.get(id);
-    if (!w) throw localizedError('NOT_FOUND', 'worktree.notFound', { id }, `Worktree introuvable: ${id}`);
+    if (!w)
+      throw localizedError('NOT_FOUND', 'worktree.notFound', { id }, `Worktree introuvable: ${id}`);
     return w;
   }
 
   /** The git worktree registered at `dir`, if any; git reports canonical paths (e.g. /private/tmp on macOS). */
   /** Removes git's registration of a lane whose directory is gone — and nothing else. A no-op when git has none. */
   private async forgetRegistration(repositoryPath: string, dir: string): Promise<void> {
-    const registered = (await listWorktrees(repositoryPath).catch(() => [])).some((w) => canonicalPath(w.path) === canonicalPath(dir));
+    const registered = (await listWorktrees(repositoryPath).catch(() => [])).some(
+      (w) => canonicalPath(w.path) === canonicalPath(dir),
+    );
     if (registered) await forgetMissingWorktree(repositoryPath, dir);
   }
 
@@ -89,22 +117,41 @@ export class WorktreeService {
     const worktree = await this.get(id);
     const ws = await this.workspaces.get(worktree.workspaceId);
     const repository = ws.repositories.find((r) => r.id === worktree.repositoryId);
-    if (!repository) throw localizedError('NOT_FOUND', 'repo.notFound', { id: worktree.repositoryId }, `Dépôt introuvable: ${worktree.repositoryId}`);
+    if (!repository)
+      throw localizedError(
+        'NOT_FOUND',
+        'repo.notFound',
+        { id: worktree.repositoryId },
+        `Dépôt introuvable: ${worktree.repositoryId}`,
+      );
     const registered = await this.registeredWorktree(repository.path, worktree.path);
     if (!registered || registered.branch !== worktree.branch) {
-      throw localizedError('CONFLICT', 'worktree.notLaneResume', { path: worktree.path, branch: worktree.branch }, `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : la session ne peut pas y reprendre.`);
+      throw localizedError(
+        'CONFLICT',
+        'worktree.notLaneResume',
+        { path: worktree.path, branch: worktree.branch },
+        `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : la session ne peut pas y reprendre.`,
+      );
     }
     return worktree;
   }
 
-  private async registeredWorktree(repositoryPath: string, dir: string): Promise<{ path: string; branch: string | null } | null> {
+  private async registeredWorktree(
+    repositoryPath: string,
+    dir: string,
+  ): Promise<{ path: string; branch: string | null } | null> {
     const real = canonicalPath;
     const target = real(dir);
-    const registered = (await listWorktrees(repositoryPath).catch(() => [])).find((w) => real(w.path) === target) ?? null;
+    const registered =
+      (await listWorktrees(repositoryPath).catch(() => [])).find((w) => real(w.path) === target) ??
+      null;
     if (!registered) return null;
     /* The registration can be stale (directory deleted and replaced): the directory itself must be a working tree
        linked to this repository and checked out on the registered branch. */
-    const [identity, repositoryIdentity] = await Promise.all([worktreeIdentity(dir), worktreeIdentity(repositoryPath)]);
+    const [identity, repositoryIdentity] = await Promise.all([
+      worktreeIdentity(dir),
+      worktreeIdentity(repositoryPath),
+    ]);
     if (!identity || !repositoryIdentity) return null;
     if (real(identity.commonDir) !== real(repositoryIdentity.commonDir)) return null;
     if (identity.branch !== registered.branch) return null;
@@ -115,36 +162,67 @@ export class WorktreeService {
     for (const ref of [repository.defaultBranch, `origin/${repository.defaultBranch}`, 'HEAD']) {
       if (await resolveCommit(repository.path, ref)) return ref;
     }
-    throw localizedError('CONFLICT', 'repo.noCommits', { repo: repository.name }, `Le dépôt ${repository.name} n’a encore aucun commit : impossible de créer un worktree isolé.`);
+    throw localizedError(
+      'CONFLICT',
+      'repo.noCommits',
+      { repo: repository.name },
+      `Le dépôt ${repository.name} n’a encore aucun commit : impossible de créer un worktree isolé.`,
+    );
+  }
+
+  /** Deterministic directory of a subtask's lane (shared by the task's steps, or its own in parallel modes). */
+  lanePath(task: Task, sub: Subtask, repositoryId: string): string {
+    const lane = sharesWorktree(task.orchestration) ? null : sub;
+    return path.join(this.rootDir, repositoryId, lane ? `${task.id}-${lane.order + 1}` : task.id);
   }
 
   /** The worktree a subtask works in: shared by the task's steps, or its own in parallel modes. Reused when it still exists. */
   ensureForSubtask(task: Task, sub: Subtask, repositoryId: string): Promise<Worktree> {
-    return this.locks.run(task.workspaceId, () => this.ensureForSubtaskLocked(task, sub, repositoryId));
+    return this.locks.run(task.workspaceId, () =>
+      this.ensureForSubtaskLocked(task, sub, repositoryId),
+    );
   }
 
-  private async ensureForSubtaskLocked(task: Task, sub: Subtask, repositoryId: string): Promise<Worktree> {
+  private async ensureForSubtaskLocked(
+    task: Task,
+    sub: Subtask,
+    repositoryId: string,
+  ): Promise<Worktree> {
     const ws = await this.workspaces.get(task.workspaceId);
     const repository = ws.repositories.find((r) => r.id === repositoryId);
-    if (!repository) throw localizedError('NOT_FOUND', 'repo.notFound', { id: repositoryId }, `Dépôt introuvable: ${repositoryId}`);
+    if (!repository)
+      throw localizedError(
+        'NOT_FOUND',
+        'repo.notFound',
+        { id: repositoryId },
+        `Dépôt introuvable: ${repositoryId}`,
+      );
     const lane = sharesWorktree(task.orchestration) ? null : sub;
     const existing = await this.repo.findLane(task.id, repository.id, lane?.id ?? null);
     if (existing && existsSync(existing.path)) {
       /* Reuse only a directory git still knows as this lane's worktree on its branch; anything else is foreign. */
       const registered = await this.registeredWorktree(repository.path, existing.path);
       if (registered?.branch === existing.branch) return existing;
-      throw localizedError('CONFLICT', 'worktree.notLane', { path: existing.path, branch: existing.branch }, `Le dossier ${existing.path} n’est plus le worktree ${existing.branch} (${registered ? `branche ${registered.branch ?? '?'}` : 'non enregistré dans git'}) : déplacez-le ou supprimez-le.`);
+      throw localizedError(
+        'CONFLICT',
+        'worktree.notLane',
+        { path: existing.path, branch: existing.branch },
+        `Le dossier ${existing.path} n’est plus le worktree ${existing.branch} (${registered ? `branche ${registered.branch ?? '?'}` : 'non enregistré dans git'}) : déplacez-le ou supprimez-le.`,
+      );
     }
     if (existing) {
       /* Directory deleted outside Codeo: forget it and clear git's stale registration; the branch is reattached below. */
-      this.log.warn('worktree directory missing, recreating', { id: existing.id, path: existing.path });
+      this.log.warn('worktree directory missing, recreating', {
+        id: existing.id,
+        path: existing.path,
+      });
       /* Forget this lane's registration first (only it): if that fails the row survives and the next attempt retries. */
       await this.forgetRegistration(repository.path, existing.path);
       await this.repo.delete(existing.id);
     }
     const baseBranch = await this.baseRef(repository);
     const branch = worktreeBranch(task, lane);
-    const target = path.join(this.rootDir, repository.id, lane ? `${task.id}-${lane.order + 1}` : task.id);
+    const target = this.lanePath(task, sub, repository.id);
     mkdirSync(path.dirname(target), { recursive: true });
     /* Crash recovery: a directory left by a run that died between `git worktree add` and the row insert
        is adopted when git knows it on the expected branch; anything else at that path is refused, never deleted. */
@@ -152,7 +230,12 @@ export class WorktreeService {
     if (existsSync(target)) {
       const registered = await this.registeredWorktree(repository.path, target);
       if (!registered || registered.branch !== branch) {
-        throw localizedError('CONFLICT', 'worktree.foreignTarget', { path: target, branch }, `Le dossier ${target} existe déjà et n’est pas le worktree attendu (${branch}) : déplacez-le ou supprimez-le.`);
+        throw localizedError(
+          'CONFLICT',
+          'worktree.foreignTarget',
+          { path: target, branch },
+          `Le dossier ${target} existe déjà et n’est pas le worktree attendu (${branch}) : déplacez-le ou supprimez-le.`,
+        );
       }
       this.log.warn('adopting worktree left by an interrupted run', { path: target, branch });
     } else {
@@ -162,7 +245,12 @@ export class WorktreeService {
         await createWorktree({ root: repository.path, path: target, branch, baseBranch });
         created = true;
       } catch (err) {
-        throw localizedError('CONFLICT', 'worktree.createFailed', { branch, reason: err instanceof Error ? err.message : String(err) }, `Impossible de créer le worktree ${branch} : ${err instanceof Error ? err.message : String(err)}`);
+        throw localizedError(
+          'CONFLICT',
+          'worktree.createFailed',
+          { branch, reason: err instanceof Error ? err.message : String(err) },
+          `Impossible de créer le worktree ${branch} : ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     const worktree: Worktree = {
@@ -181,7 +269,10 @@ export class WorktreeService {
       await this.repo.insert(worktree);
     } catch (err) {
       /* Never leave an unrecorded worktree behind: undo what this call created (the branch stays). */
-      if (created) await removeWorktree(repository.path, target, { force: true }).catch((e) => this.log.error('rollback failed', { target, err: String(e) }));
+      if (created)
+        await removeWorktree(repository.path, target, { force: true }).catch((e) =>
+          this.log.error('rollback failed', { target, err: String(e) }),
+        );
       throw err;
     }
     this.bus.publish('WorktreeCreated', { worktree });
@@ -189,28 +280,53 @@ export class WorktreeService {
   }
 
   /** Removes the directory; the branch (and every commit on it) stays in the repository. */
-  async remove(id: string, opts: { force: boolean; /** Runs after the safety checks, right before the directory goes (release owning sessions). */ beforeRemove?: () => Promise<void> }): Promise<boolean> {
+  async remove(
+    id: string,
+    opts: {
+      force: boolean;
+      /** Runs after the safety checks, right before the directory goes (release owning sessions). */ beforeRemove?: () => Promise<void>;
+    },
+  ): Promise<boolean> {
     const worktree = await this.get(id);
     if (existsSync(worktree.path)) {
       const ws = await this.workspaces.get(worktree.workspaceId);
       const repository = ws.repositories.find((r) => r.id === worktree.repositoryId);
-      if (!repository) throw localizedError('NOT_FOUND', 'repo.notFound', { id: worktree.repositoryId }, `Dépôt introuvable: ${worktree.repositoryId}`);
+      if (!repository)
+        throw localizedError(
+          'NOT_FOUND',
+          'repo.notFound',
+          { id: worktree.repositoryId },
+          `Dépôt introuvable: ${worktree.repositoryId}`,
+        );
       /* Only what git knows as this lane's worktree on its branch is ever removed; a replaced directory is foreign. */
       const registered = await this.registeredWorktree(repository.path, worktree.path);
       if (!registered || registered.branch !== worktree.branch) {
-        throw localizedError('CONFLICT', 'worktree.notLaneRemove', { path: worktree.path, branch: worktree.branch }, `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : Codeo n’y touche pas. Retirez-le manuellement puis supprimez cette entrée.`);
+        throw localizedError(
+          'CONFLICT',
+          'worktree.notLaneRemove',
+          { path: worktree.path, branch: worktree.branch },
+          `Le dossier ${worktree.path} n’est plus le worktree ${worktree.branch} : Codeo n’y touche pas. Retirez-le manuellement puis supprimez cette entrée.`,
+        );
       }
       if (!opts.force && (await isDirty(worktree.path).catch(() => false))) {
-        throw localizedError('CONFLICT', 'worktree.dirty', undefined, 'Ce worktree contient des modifications non commitées. Confirmez la suppression forcée pour les abandonner.');
+        throw localizedError(
+          'CONFLICT',
+          'worktree.dirty',
+          undefined,
+          'Ce worktree contient des modifications non commitées. Confirmez la suppression forcée pour les abandonner.',
+        );
       }
       await opts.beforeRemove?.();
       await removeWorktree(repository.path, worktree.path, { force: opts.force });
     } else {
       await opts.beforeRemove?.();
       /* Directory gone (deleted outside Codeo): clear git's stale registration so the branch can be reattached later. */
-      const repository = (await this.workspaces.get(worktree.workspaceId).catch(() => null))?.repositories.find((r) => r.id === worktree.repositoryId);
+      const repository = (
+        await this.workspaces.get(worktree.workspaceId).catch(() => null)
+      )?.repositories.find((r) => r.id === worktree.repositoryId);
       /* A repository that was itself deleted or moved cannot be updated; its stale metadata must not block removal. */
-      if (repository && existsSync(repository.path)) await this.forgetRegistration(repository.path, worktree.path);
+      if (repository && existsSync(repository.path))
+        await this.forgetRegistration(repository.path, worktree.path);
     }
     await this.repo.delete(id);
     this.bus.publish('WorktreeRemoved', { worktreeId: id, taskId: worktree.taskId });

@@ -19,7 +19,7 @@ import {
 } from '@codeo/domain';
 import { newId, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
-import type { SessionService } from './sessions';
+import { laneKey, type SessionService } from './sessions';
 import type { WorkspaceService } from './workspaces';
 import type { WorktreeService } from './worktrees';
 
@@ -64,14 +64,20 @@ export class TaskService {
     private readonly log: Logger,
   ) {
     /* Sends and user cancellations of task-owned sessions run under the task lock, serialised with the scheduler. */
-    sessions.addSendInterceptor((s, next, operation) => (s.taskId ? this.locked(s.taskId, async () => {
-      if (operation === 'send') await this.assertSendAllowed(s);
-      return next();
-    }) : next()));
+    sessions.addSendInterceptor((s, next, operation) =>
+      s.taskId
+        ? this.locked(s.taskId, async () => {
+            if (operation === 'send') await this.assertSendAllowed(s);
+            return next();
+          })
+        : next(),
+    );
     sessions.addListener({
       onStatus: (s) => {
         if (!s.taskId) return;
-        this.locked(s.taskId, () => this.onSessionStatus(s)).catch((err) => this.log.error('task update failed', { taskId: s.taskId, err: String(err) }));
+        this.locked(s.taskId, () => this.onSessionStatus(s)).catch((err) =>
+          this.log.error('task update failed', { taskId: s.taskId, err: String(err) }),
+        );
       },
     });
   }
@@ -85,9 +91,17 @@ export class TaskService {
         if (t.status === 'running' || t.status === 'waiting_approval' || t.status === 'queued') {
           /* Work that still has active or runnable steps waits for the user (paused); settled work gets its final status now. */
           for (const b of blockedSubtasks(t)) t = patchSubtask(t, b.id, { status: 'cancelled' });
-          const active = t.subtasks.some((s) => s.status === 'running' || s.status === 'waiting_approval') || runnableSubtasks(t).length > 0;
+          const active =
+            t.subtasks.some((s) => s.status === 'running' || s.status === 'waiting_approval') ||
+            runnableSubtasks(t).length > 0;
           if (active) await this.save(t, 'paused', { subtasks: t.subtasks });
-          else await this.save(t, aggregateTaskStatus(t), { subtasks: t.subtasks, progress: taskProgress(t) }, t.subtasks.find((s) => s.status === 'failed' && s.error)?.error ?? undefined);
+          else
+            await this.save(
+              t,
+              aggregateTaskStatus(t),
+              { subtasks: t.subtasks, progress: taskProgress(t) },
+              t.subtasks.find((s) => s.status === 'failed' && s.error)?.error ?? undefined,
+            );
         }
       });
     }
@@ -101,24 +115,58 @@ export class TaskService {
       /* Assigned and still active in the row: the session's persisted outcome may be newer (crash before the listener saved it). */
       if (sub.sessionId && (sub.status === 'running' || sub.status === 'waiting_approval')) {
         const current = sessions.find((s) => s.id === sub.sessionId);
-        const outcome = current && current.status !== 'disconnected' && current.status !== 'created' ? SUBTASK_STATUS_FROM_SESSION[current.status] : undefined;
+        const outcome =
+          current && current.status !== 'disconnected' && current.status !== 'created'
+            ? SUBTASK_STATUS_FROM_SESSION[current.status]
+            : undefined;
         /* pause() cancels the sessions on purpose while keeping their subtasks active for resume(): that cancellation is expected. */
         const expectedPauseCancel = task.status === 'paused' && outcome === 'cancelled';
-        if (current && outcome && !expectedPauseCancel && outcome !== sub.status && outcome !== 'running' && outcome !== 'waiting_approval') {
-          this.log.warn('subtask outcome recovered from its session', { taskId: task.id, subtaskId: sub.id, outcome });
-          task = patchSubtask(task, sub.id, { status: outcome, error: outcome === 'failed' ? (current.error ?? sub.error) : sub.error });
+        if (
+          current &&
+          outcome &&
+          !expectedPauseCancel &&
+          outcome !== sub.status &&
+          outcome !== 'running' &&
+          outcome !== 'waiting_approval'
+        ) {
+          this.log.warn('subtask outcome recovered from its session', {
+            taskId: task.id,
+            subtaskId: sub.id,
+            outcome,
+          });
+          task = patchSubtask(task, sub.id, {
+            status: outcome,
+            error: outcome === 'failed' ? (current.error ?? sub.error) : sub.error,
+          });
           changed = true;
         }
         continue;
       }
       if (sub.sessionId) continue;
       /* Only a session of the current attempt counts: a retry detached the older ones on purpose. */
-      const orphan = sessions.find((s) => s.subtaskId === sub.id && (!sub.attemptStartedAt || s.createdAt >= sub.attemptStartedAt));
+      const orphan = sessions.find(
+        (s) =>
+          s.subtaskId === sub.id && (!sub.attemptStartedAt || s.createdAt >= sub.attemptStartedAt),
+      );
       if (!orphan) continue;
-      this.log.warn('reattaching orphaned session to its subtask', { taskId: task.id, subtaskId: sub.id, sessionId: orphan.id });
+      this.log.warn('reattaching orphaned session to its subtask', {
+        taskId: task.id,
+        subtaskId: sub.id,
+        sessionId: orphan.id,
+      });
       /* The session's persisted outcome wins: finished work is not rerun, a disconnected agent is resumable work. */
-      const recovered = orphan.status === 'disconnected' || orphan.status === 'created' || (task.status === 'paused' && orphan.status === 'cancelled') ? 'running' : (SUBTASK_STATUS_FROM_SESSION[orphan.status] ?? 'running');
-      task = patchSubtask(task, sub.id, { status: recovered, sessionId: orphan.id, worktreeId: orphan.worktreeId ?? sub.worktreeId, error: recovered === 'failed' ? (orphan.error ?? sub.error) : sub.error });
+      const recovered =
+        orphan.status === 'disconnected' ||
+        orphan.status === 'created' ||
+        (task.status === 'paused' && orphan.status === 'cancelled')
+          ? 'running'
+          : (SUBTASK_STATUS_FROM_SESSION[orphan.status] ?? 'running');
+      task = patchSubtask(task, sub.id, {
+        status: recovered,
+        sessionId: orphan.id,
+        worktreeId: orphan.worktreeId ?? sub.worktreeId,
+        error: recovered === 'failed' ? (orphan.error ?? sub.error) : sub.error,
+      });
       changed = true;
     }
     if (changed) await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
@@ -155,7 +203,12 @@ export class TaskService {
   }
 
   /** Persists the task, moving through the legal intermediate statuses when needed. */
-  private async save(task: Task, status: TaskStatus, patch: Partial<Task> = {}, error?: string): Promise<Task> {
+  private async save(
+    task: Task,
+    status: TaskStatus,
+    patch: Partial<Task> = {},
+    error?: string,
+  ): Promise<Task> {
     const path = taskTransitionPath(task.status, status);
     if (!path) {
       /* No legal path: nothing is persisted or announced (a terminal task is never touched by a stray patch). */
@@ -166,29 +219,62 @@ export class TaskService {
     const updated: Task = { ...task, ...patch, status: next, updatedAt: new Date().toISOString() };
     await this.repo.upsert(updated);
     /* Consumers only ever see legal edges: intermediate states of a multi-step path are announced before the final one. */
-    for (const intermediate of path.slice(0, -1)) this.bus.publish('TaskUpdated', { task: { ...updated, status: intermediate } });
+    for (const intermediate of path.slice(0, -1))
+      this.bus.publish('TaskUpdated', { task: { ...updated, status: intermediate } });
     this.bus.publish('TaskUpdated', { task: updated });
-    if (updated.progress !== task.progress) this.bus.publish('TaskProgressChanged', { taskId: task.id, progress: updated.progress });
-    if (next !== task.status && next === 'completed') this.bus.publish('TaskCompleted', { task: updated });
-    if (next !== task.status && next === 'failed') this.bus.publish('TaskFailed', { task: updated, error: error ?? '' });
+    if (updated.progress !== task.progress)
+      this.bus.publish('TaskProgressChanged', { taskId: task.id, progress: updated.progress });
+    if (next !== task.status && next === 'completed')
+      this.bus.publish('TaskCompleted', { task: updated });
+    if (next !== task.status && next === 'failed')
+      this.bus.publish('TaskFailed', { task: updated, error: error ?? '' });
     return updated;
   }
 
   async create(input: CommandParsedParams<'tasks.create'>): Promise<Task> {
     const ws = await this.workspaces.get(input.workspaceId);
     const known = (id: string) => ws.repositories.some((r) => r.id === id);
-    for (const id of input.repositoryIds) if (!known(id)) throw localizedError('INVALID_PARAMS', 'repo.unknown', { id }, `Dépôt inconnu: ${id}`);
+    for (const id of input.repositoryIds)
+      if (!known(id))
+        throw localizedError('INVALID_PARAMS', 'repo.unknown', { id }, `Dépôt inconnu: ${id}`);
     const mode = input.orchestration;
     const title = input.title.trim();
     const objective = input.objective.trim();
     const plans = input.subtasks.length
       ? input.subtasks
-      : [{ title: '', instructions: '', provider: input.provider, role: input.role, model: input.model, repositoryId: null, dependsOn: [] }];
+      : [
+          {
+            title: '',
+            instructions: '',
+            provider: input.provider,
+            role: input.role,
+            model: input.model,
+            repositoryId: null,
+            dependsOn: [],
+          },
+        ];
 
-    if (mode === 'single' && plans.length !== 1) throw localizedError('INVALID_PARAMS', 'plan.singleOneAgent', undefined, 'Le mode simple utilise exactement un agent.');
-    if (mode === 'best-of-n' && plans.length < 2) throw localizedError('INVALID_PARAMS', 'plan.bestOfNMin', undefined, 'Best-of-N demande au moins deux agents.');
+    if (mode === 'single' && plans.length !== 1)
+      throw localizedError(
+        'INVALID_PARAMS',
+        'plan.singleOneAgent',
+        undefined,
+        'Le mode simple utilise exactement un agent.',
+      );
+    if (mode === 'best-of-n' && plans.length < 2)
+      throw localizedError(
+        'INVALID_PARAMS',
+        'plan.bestOfNMin',
+        undefined,
+        'Best-of-N demande au moins deux agents.',
+      );
     if ((mode === 'parallel' || mode === 'best-of-n') && input.isolation !== 'worktree') {
-      throw localizedError('INVALID_PARAMS', 'plan.parallelNeedsWorktree', undefined, 'Des agents en parallèle doivent travailler dans des worktrees isolés.');
+      throw localizedError(
+        'INVALID_PARAMS',
+        'plan.parallelNeedsWorktree',
+        undefined,
+        'Des agents en parallèle doivent travailler dans des worktrees isolés.',
+      );
     }
 
     /* The workspace's first repository is only a fallback for agents that pick none; it joins the task's list only when used. */
@@ -197,13 +283,32 @@ export class TaskService {
     const taskId = newId('task');
     const subIds = plans.map(() => newId('sub'));
     const subtasks: Subtask[] = plans.map((p, i) => {
-      if (p.repositoryId && !known(p.repositoryId)) throw localizedError('INVALID_PARAMS', 'repo.unknown', { id: p.repositoryId }, `Dépôt inconnu: ${p.repositoryId}`);
-      if (p.dependsOn.some((d) => d >= i)) throw localizedError('INVALID_PARAMS', 'plan.dependsEarlier', undefined, 'Une sous-tâche ne peut dépendre que d’une sous-tâche précédente.');
-      if (mode === 'best-of-n' && p.dependsOn.length) throw localizedError('INVALID_PARAMS', 'plan.bestOfNIndependent', undefined, 'Les candidats Best-of-N sont indépendants.');
+      if (p.repositoryId && !known(p.repositoryId))
+        throw localizedError(
+          'INVALID_PARAMS',
+          'repo.unknown',
+          { id: p.repositoryId },
+          `Dépôt inconnu: ${p.repositoryId}`,
+        );
+      if (p.dependsOn.some((d) => d >= i))
+        throw localizedError(
+          'INVALID_PARAMS',
+          'plan.dependsEarlier',
+          undefined,
+          'Une sous-tâche ne peut dépendre que d’une sous-tâche précédente.',
+        );
+      if (mode === 'best-of-n' && p.dependsOn.length)
+        throw localizedError(
+          'INVALID_PARAMS',
+          'plan.bestOfNIndependent',
+          undefined,
+          'Les candidats Best-of-N sont indépendants.',
+        );
       const repositoryId = p.repositoryId ?? input.repositoryIds[0] ?? fallbackRepositoryId;
       if (repositoryId && !repositoryIds.includes(repositoryId)) repositoryIds.push(repositoryId);
       /* Best-of-N candidates all attempt the same objective. */
-      const instructions = (mode === 'best-of-n' ? '' : p.instructions.trim()) || objective || title;
+      const instructions =
+        (mode === 'best-of-n' ? '' : p.instructions.trim()) || objective || title;
       return {
         id: subIds[i]!,
         taskId,
@@ -222,7 +327,12 @@ export class TaskService {
     });
     /* Chained steps share one worktree, so they must live in one repository (lanes are keyed by repository). */
     if (sharesWorktree(mode) && new Set(subtasks.map((s) => s.repositoryId)).size > 1) {
-      throw localizedError('INVALID_PARAMS', 'plan.chainedOneRepository', undefined, 'Les étapes enchaînées (séquentiel, pipeline) travaillent dans un seul dépôt.');
+      throw localizedError(
+        'INVALID_PARAMS',
+        'plan.chainedOneRepository',
+        undefined,
+        'Les étapes enchaînées (séquentiel, pipeline) travaillent dans un seul dépôt.',
+      );
     }
 
     const now = new Date().toISOString();
@@ -253,27 +363,64 @@ export class TaskService {
   start(taskId: string): Promise<{ task: Task; sessions: AgentSession[] }> {
     return this.locked(taskId, async () => {
       let task = await this.get(taskId);
-      if (!task.subtasks.length) throw localizedError('INVALID_PARAMS', 'task.noSubtasks', undefined, 'La tâche n’a aucune sous-tâche.');
+      if (!task.subtasks.length)
+        throw localizedError(
+          'INVALID_PARAMS',
+          'task.noSubtasks',
+          undefined,
+          'La tâche n’a aucune sous-tâche.',
+        );
       if (task.status !== 'draft' && task.status !== 'failed') {
-        throw task.status === 'paused' ? localizedError('CONFLICT', 'task.pausedResume', undefined, 'La tâche est en pause : reprenez-la.') : localizedError('CONFLICT', 'task.alreadyStarted', undefined, 'La tâche est déjà démarrée.');
+        throw task.status === 'paused'
+          ? localizedError(
+              'CONFLICT',
+              'task.pausedResume',
+              undefined,
+              'La tâche est en pause : reprenez-la.',
+            )
+          : localizedError(
+              'CONFLICT',
+              'task.alreadyStarted',
+              undefined,
+              'La tâche est déjà démarrée.',
+            );
       }
       /* Replaced sessions are closed first so an old provider handle cannot keep working beside the retry. */
       for (const s of task.subtasks) {
-        if ((s.status === 'failed' || s.status === 'cancelled') && s.sessionId && this.sessions.isLive(s.sessionId)) {
+        if (
+          (s.status === 'failed' || s.status === 'cancelled') &&
+          s.sessionId &&
+          this.sessions.isLive(s.sessionId)
+        ) {
           try {
             await this.sessions.cancel(s.sessionId, { fromScheduler: true });
           } catch (err) {
             /* No replacement while the old agent may still hold the worktree. */
-            throw localizedError('CONFLICT', 'task.replacedSessionClose', { step: s.title, reason: err instanceof Error ? err.message : String(err) }, `Impossible de fermer l’ancienne session de « ${s.title} » : ${err instanceof Error ? err.message : String(err)}. Réessayez.`);
+            throw localizedError(
+              'CONFLICT',
+              'task.replacedSessionClose',
+              { step: s.title, reason: err instanceof Error ? err.message : String(err) },
+              `Impossible de fermer l’ancienne session de « ${s.title} » : ${err instanceof Error ? err.message : String(err)}. Réessayez.`,
+            );
           }
         }
       }
       const attemptStartedAt = new Date().toISOString();
-      const subtasks = task.subtasks.map((s) => (s.status === 'failed' || s.status === 'cancelled' ? { ...s, status: 'pending' as const, sessionId: null, error: null, attemptStartedAt } : s));
-      task = await this.save(task, 'queued', { subtasks, startedAt: task.startedAt ?? new Date().toISOString() });
+      const subtasks = task.subtasks.map((s) =>
+        s.status === 'failed' || s.status === 'cancelled'
+          ? { ...s, status: 'pending' as const, sessionId: null, error: null, attemptStartedAt }
+          : s,
+      );
+      task = await this.save(task, 'queued', {
+        subtasks,
+        startedAt: task.startedAt ?? new Date().toISOString(),
+      });
       const { task: advanced, sessions, errors, firstError } = await this.advance(task);
       /* The original error keeps its code and localization details (e.g. repo.noCommits, worktree.createFailed). */
-      if (!sessions.length && errors.length) throw firstError instanceof RuntimeError ? firstError : new RuntimeError('PROVIDER_UNAVAILABLE', errors[0]!);
+      if (!sessions.length && errors.length)
+        throw firstError instanceof RuntimeError
+          ? firstError
+          : new RuntimeError('PROVIDER_UNAVAILABLE', errors[0]!);
       return { task: advanced, sessions };
     });
   }
@@ -283,7 +430,11 @@ export class TaskService {
       const task = await this.get(taskId);
       /* Status first: the cancelled sessions' events then find a frozen task and change nothing. */
       const updated = await this.save(task, 'cancelled', {
-        subtasks: task.subtasks.map((s) => (['pending', 'running', 'waiting_approval'].includes(s.status) ? { ...s, status: 'cancelled' } : s)),
+        subtasks: task.subtasks.map((s) =>
+          ['pending', 'running', 'waiting_approval'].includes(s.status)
+            ? { ...s, status: 'cancelled' }
+            : s,
+        ),
       });
       /* A stop failure is reported, not swallowed: the task stays cancelled and the command can be retried. */
       await this.stopSessions(task);
@@ -295,8 +446,16 @@ export class TaskService {
   pause(taskId: string): Promise<Task> {
     return this.locked(taskId, async () => {
       const task = await this.get(taskId);
-      const retryingStop = task.status === 'paused' && task.subtasks.some((s) => s.sessionId && this.sessions.isLive(s.sessionId));
-      if (!retryingStop && !['queued', 'running', 'waiting_approval'].includes(task.status)) throw localizedError('CONFLICT', 'task.onlyRunningPause', undefined, 'Seule une tâche en cours peut être mise en pause.');
+      const retryingStop =
+        task.status === 'paused' &&
+        task.subtasks.some((s) => s.sessionId && this.sessions.isLive(s.sessionId));
+      if (!retryingStop && !['queued', 'running', 'waiting_approval'].includes(task.status))
+        throw localizedError(
+          'CONFLICT',
+          'task.onlyRunningPause',
+          undefined,
+          'Seule une tâche en cours peut être mise en pause.',
+        );
       const updated = await this.save(task, 'paused');
       /* If an agent could not be stopped the error surfaces; the task stays paused so `pause` can be retried. */
       await this.stopSessions(task);
@@ -307,11 +466,24 @@ export class TaskService {
   resume(taskId: string): Promise<Task> {
     return this.locked(taskId, async () => {
       let task = await this.get(taskId);
-      if (task.status !== 'paused') throw localizedError('CONFLICT', 'task.onlyPausedResume', undefined, 'Seule une tâche en pause peut être reprise.');
+      if (task.status !== 'paused')
+        throw localizedError(
+          'CONFLICT',
+          'task.onlyPausedResume',
+          undefined,
+          'Seule une tâche en pause peut être reprise.',
+        );
       /* A pause that could not stop every agent leaves handles live: they must be stopped (retry the pause) before anything resumes. */
-      const stillLive = task.subtasks.filter((s) => s.sessionId && this.sessions.isLive(s.sessionId));
+      const stillLive = task.subtasks.filter(
+        (s) => s.sessionId && this.sessions.isLive(s.sessionId),
+      );
       if (stillLive.length) {
-        throw localizedError('CONFLICT', 'task.stopPending', { steps: stillLive.map((s) => s.title).join(', ') }, `Un agent est encore actif (${stillLive.map((s) => s.title).join(', ')}) : réessayez la mise en pause avant de reprendre.`);
+        throw localizedError(
+          'CONFLICT',
+          'task.stopPending',
+          { steps: stillLive.map((s) => s.title).join(', ') },
+          `Un agent est encore actif (${stillLive.map((s) => s.title).join(', ')}) : réessayez la mise en pause avant de reprendre.`,
+        );
       }
       task = await this.save(task, 'running');
       for (const sub of task.subtasks) {
@@ -323,13 +495,26 @@ export class TaskService {
         } catch (err) {
           if (sub.sessionId && this.sessions.isLive(sub.sessionId)) {
             /* The failed send left a live handle (close failed too): never launch a second agent beside it. */
-            throw localizedError('CONFLICT', 'task.stopPending', { steps: sub.title }, `Un agent est encore actif (${sub.title}) : réessayez la mise en pause avant de reprendre.`);
+            throw localizedError(
+              'CONFLICT',
+              'task.stopPending',
+              { steps: sub.title },
+              `Un agent est encore actif (${sub.title}) : réessayez la mise en pause avant de reprendre.`,
+            );
           }
           /* The provider conversation cannot be resumed: start the subtask over, in the same worktree. The detachment
              and a fresh attempt boundary are persisted before any replacement starts, so a crash in between leaves
              recovery adopting the replacement rather than the old session. */
-          this.log.warn('subtask restarted instead of resumed', { taskId, subtaskId: sub.id, err: String(err) });
-          task = patchSubtask(task, sub.id, { status: 'pending', sessionId: null, attemptStartedAt: new Date().toISOString() });
+          this.log.warn('subtask restarted instead of resumed', {
+            taskId,
+            subtaskId: sub.id,
+            err: String(err),
+          });
+          task = patchSubtask(task, sub.id, {
+            status: 'pending',
+            sessionId: null,
+            attemptStartedAt: new Date().toISOString(),
+          });
           await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
         }
       }
@@ -350,52 +535,110 @@ export class TaskService {
         failures.push(`${s.title} : ${message}`);
       }
     }
-    if (failures.length) throw localizedError('INTERNAL', 'task.stopFailed', { details: failures.join(' ; ') }, `Un agent n’a pas pu être arrêté — ${failures.join(' ; ')}. Réessayez l’arrêt.`);
+    if (failures.length)
+      throw localizedError(
+        'INTERNAL',
+        'task.stopFailed',
+        { details: failures.join(' ; ') },
+        `Un agent n’a pas pu être arrêté — ${failures.join(' ; ')}. Réessayez l’arrêt.`,
+      );
   }
 
   /**
    * Cancels blocked subtasks, launches every runnable one, then derives and saves the task
    * status. Runs until the plan stops changing (a failed launch can block further steps).
    */
-  private async advance(task: Task, cause?: string): Promise<{ task: Task; sessions: AgentSession[]; errors: string[]; firstError: unknown }> {
+  private async advance(
+    task: Task,
+    cause?: string,
+  ): Promise<{ task: Task; sessions: AgentSession[]; errors: string[]; firstError: unknown }> {
     const sessions: AgentSession[] = [];
     const errors: string[] = cause ? [cause] : [];
     let firstError: unknown = null;
     for (;;) {
-      for (const b of blockedSubtasks(task)) task = patchSubtask(task, b.id, { status: 'cancelled' });
+      for (const b of blockedSubtasks(task))
+        task = patchSubtask(task, b.id, { status: 'cancelled' });
       /* While shutting down nothing new starts: the task is paused at boot and resumed by the user. */
-      const runnable = !this.stopping && SCHEDULABLE.includes(task.status) ? runnableSubtasks(task) : [];
+      const runnable =
+        !this.stopping && SCHEDULABLE.includes(task.status) ? runnableSubtasks(task) : [];
       if (!runnable.length) break;
       for (const sub of runnable) {
         try {
           const { session, worktree } = await this.launch(task, sub);
-          task = patchSubtask(task, sub.id, { status: 'running', sessionId: session.id, worktreeId: worktree?.id ?? sub.worktreeId });
+          task = patchSubtask(task, sub.id, {
+            status: 'running',
+            sessionId: session.id,
+            worktreeId: worktree?.id ?? sub.worktreeId,
+          });
           /* Durable before the next launch: a crash here must not let recovery start a second agent for this step. */
           await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
           sessions.push(session);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          this.log.warn('subtask launch failed', { taskId: task.id, subtaskId: sub.id, err: message });
+          this.log.warn('subtask launch failed', {
+            taskId: task.id,
+            subtaskId: sub.id,
+            err: message,
+          });
           errors.push(message);
           firstError ??= err;
           /* A session that got as far as existing is recorded, so the retry closes it before launching a replacement. */
-          const startedSessionId = err instanceof RuntimeError && err.details && typeof err.details === 'object' && typeof (err.details as { sessionId?: unknown }).sessionId === 'string' ? (err.details as { sessionId: string }).sessionId : null;
-          task = patchSubtask(task, sub.id, { status: 'failed', error: message, ...(startedSessionId ? { sessionId: startedSessionId } : {}) });
-          if (startedSessionId) await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
+          const startedSessionId =
+            err instanceof RuntimeError &&
+            err.details &&
+            typeof err.details === 'object' &&
+            typeof (err.details as { sessionId?: unknown }).sessionId === 'string'
+              ? (err.details as { sessionId: string }).sessionId
+              : null;
+          task = patchSubtask(task, sub.id, {
+            status: 'failed',
+            error: message,
+            ...(startedSessionId ? { sessionId: startedSessionId } : {}),
+          });
+          if (startedSessionId)
+            await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
         }
       }
     }
     const status = FROZEN.includes(task.status) ? task.status : aggregateTaskStatus(task);
     /* A failure observed earlier (parallel mode) must still be reported when the task finally fails. */
-    const failureCause = errors[0] ?? task.subtasks.find((s) => s.status === 'failed' && s.error)?.error ?? undefined;
-    const saved = await this.save(task, status, { progress: status === 'review' ? 90 : taskProgress(task) }, failureCause);
+    const failureCause =
+      errors[0] ?? task.subtasks.find((s) => s.status === 'failed' && s.error)?.error ?? undefined;
+    const saved = await this.save(
+      task,
+      status,
+      { progress: status === 'review' ? 90 : taskProgress(task) },
+      failureCause,
+    );
     return { task: saved, sessions, errors, firstError };
   }
 
-  private async launch(task: Task, sub: Subtask): Promise<{ session: AgentSession; worktree: Worktree | null }> {
+  /** Ensure/recovery of the lane and provider startup run under the lane's path lock, so worktrees.remove cannot interleave. */
+  private async launch(
+    task: Task,
+    sub: Subtask,
+  ): Promise<{ session: AgentSession; worktree: Worktree | null }> {
     const ws = await this.workspaces.get(task.workspaceId);
-    const repositoryId = sub.repositoryId ?? task.repositoryIds[0] ?? ws.repositories[0]?.id ?? null;
-    const worktree = task.isolation === 'worktree' && repositoryId ? await this.worktrees.ensureForSubtask(task, sub, repositoryId) : null;
+    const repositoryId =
+      sub.repositoryId ?? task.repositoryIds[0] ?? ws.repositories[0]?.id ?? null;
+    if (task.isolation === 'worktree' && repositoryId) {
+      const lane = this.worktrees.lanePath(task, sub, repositoryId);
+      return this.sessions.worktreeLocks.run(laneKey(lane), () =>
+        this.launchInLane(task, sub, repositoryId),
+      );
+    }
+    return this.launchInLane(task, sub, repositoryId);
+  }
+
+  private async launchInLane(
+    task: Task,
+    sub: Subtask,
+    repositoryId: string | null,
+  ): Promise<{ session: AgentSession; worktree: Worktree | null }> {
+    const worktree =
+      task.isolation === 'worktree' && repositoryId
+        ? await this.worktrees.ensureForSubtask(task, sub, repositoryId)
+        : null;
     const prefix = task.ticketKey ? `${task.ticketKey} · ${task.title}` : task.title;
     const session = await this.sessions.start(
       {
@@ -409,44 +652,76 @@ export class TaskService {
         model: sub.assignment.model,
       },
       /* The subtask id is always persisted on the session so crash recovery can match it, worktree or not. */
-      { ...(worktree ? { cwd: worktree.path } : {}), worktreeId: worktree?.id ?? null, subtaskId: sub.id },
+      {
+        ...(worktree ? { cwd: worktree.path, laneLockHeld: true } : {}),
+        worktreeId: worktree?.id ?? null,
+        subtaskId: sub.id,
+      },
     );
     return { session, worktree };
   }
 
   private async buildPrompt(task: Task, sub: Subtask, worktree: Worktree | null): Promise<string> {
-    const lines: (string | null)[] = [task.ticketKey ? `Ticket : ${task.ticketKey}` : null, `Tâche : ${task.title}`, ''];
+    const lines: (string | null)[] = [
+      task.ticketKey ? `Ticket : ${task.ticketKey}` : null,
+      `Tâche : ${task.title}`,
+      '',
+    ];
     const multi = task.subtasks.length > 1;
-    if (multi && task.objective && task.objective !== sub.instructions) lines.push('Objectif global :', task.objective, '');
+    if (multi && task.objective && task.objective !== sub.instructions)
+      lines.push('Objectif global :', task.objective, '');
     if (task.orchestration === 'pipeline' || task.orchestration === 'sequential') {
       const ordered = orderedSubtasks(task);
-      lines.push(`Étape ${ordered.findIndex((s) => s.id === sub.id) + 1}/${ordered.length} — ${sub.title}`);
+      lines.push(
+        `Étape ${ordered.findIndex((s) => s.id === sub.id) + 1}/${ordered.length} — ${sub.title}`,
+      );
     } else if (multi) {
       lines.push(`Ta partie : ${sub.title}`);
     }
     lines.push(sub.instructions);
     if (worktree) {
-      lines.push('', `Tu travailles dans un worktree Git isolé (${worktree.path}) sur la branche \`${worktree.branch}\`. Reste dans ce dossier et ne change pas de branche.`);
+      lines.push(
+        '',
+        `Tu travailles dans un worktree Git isolé (${worktree.path}) sur la branche \`${worktree.branch}\`. Reste dans ce dossier et ne change pas de branche.`,
+      );
     }
     if (task.orchestration === 'best-of-n') {
-      lines.push('', 'D’autres agents tentent le même objectif en parallèle dans leurs propres worktrees ; un humain choisira la meilleure proposition.');
+      lines.push(
+        '',
+        'D’autres agents tentent le même objectif en parallèle dans leurs propres worktrees ; un humain choisira la meilleure proposition.',
+      );
     }
     if (task.orchestration === 'sequential' && subtaskDependencies(task, sub).length) {
-      lines.push('', 'Les étapes précédentes ont été réalisées dans ce même dossier : pars de leur travail.');
+      lines.push(
+        '',
+        'Les étapes précédentes ont été réalisées dans ce même dossier : pars de leur travail.',
+      );
     }
     if (task.orchestration === 'pipeline') {
       /* Each step receives the output of every earlier step, not only its direct dependency. */
       const ordered = orderedSubtasks(task);
-      const earlier = ordered.slice(0, ordered.findIndex((s) => s.id === sub.id));
+      const earlier = ordered.slice(
+        0,
+        ordered.findIndex((s) => s.id === sub.id),
+      );
       const handoffs: string[] = [];
       for (const dep of earlier) {
         if (!dep.sessionId) continue;
         const output = await this.lastAssistantText(dep.sessionId);
         handoffs.push(`### ${dep.title} (${dep.assignment.role})`, output || '(aucune sortie)', '');
       }
-      if (handoffs.length) lines.push('', 'Résultat des étapes précédentes (même dossier de travail) :', '', ...handoffs);
+      if (handoffs.length)
+        lines.push(
+          '',
+          'Résultat des étapes précédentes (même dossier de travail) :',
+          '',
+          ...handoffs,
+        );
     }
-    return lines.filter((l) => l !== null).join('\n').trim();
+    return lines
+      .filter((l) => l !== null)
+      .join('\n')
+      .trim();
   }
 
   /** The whole transcript: `entries()` pages by 2,000, and a long step can exceed one page. */
@@ -468,7 +743,10 @@ export class TaskService {
     const lastUser = entries.map((e) => e.kind).lastIndexOf('user_message');
     const parts = entries
       .slice(lastUser + 1)
-      .filter((e): e is Extract<typeof e, { kind: 'assistant_text' }> => e.kind === 'assistant_text' && e.text.trim().length > 0)
+      .filter(
+        (e): e is Extract<typeof e, { kind: 'assistant_text' }> =>
+          e.kind === 'assistant_text' && e.text.trim().length > 0,
+      )
       .map((e) => e.text.trim());
     const text = parts.join('\n\n');
     return text.length > HANDOFF_MAX_CHARS ? `${text.slice(0, HANDOFF_MAX_CHARS)}…` : text;
@@ -486,23 +764,67 @@ export class TaskService {
     if (!task) return;
     const sub = task.subtasks.find((s) => s.sessionId === session.id);
     /* A session the scheduler replaced (retry) must never run again beside its replacement. */
-    if (!sub) throw localizedError('CONFLICT', 'session.replaced', undefined, 'Cette session a été remplacée par une nouvelle tentative : ouvrez la session actuelle de l’étape.');
+    if (!sub)
+      throw localizedError(
+        'CONFLICT',
+        'session.replaced',
+        undefined,
+        'Cette session a été remplacée par une nouvelle tentative : ouvrez la session actuelle de l’étape.',
+      );
     if (task.status === 'completed' || task.status === 'cancelled') {
-      throw localizedError('CONFLICT', 'task.closed', undefined, 'Cette tâche est terminée : créez une nouvelle tâche pour continuer.');
+      throw localizedError(
+        'CONFLICT',
+        'task.closed',
+        undefined,
+        'Cette tâche est terminée : créez une nouvelle tâche pour continuer.',
+      );
     }
-    if (task.status === 'paused') throw localizedError('CONFLICT', 'task.pausedSend', undefined, 'La tâche est en pause : reprenez-la pour continuer.');
-    if (task.status === 'failed') throw localizedError('CONFLICT', 'task.failedSend', undefined, 'La tâche est en échec : redémarrez-la pour relancer ses étapes.');
-    if (task.status === 'draft') throw localizedError('CONFLICT', 'task.draftSend', undefined, 'La tâche n’est pas démarrée.');
+    if (task.status === 'paused')
+      throw localizedError(
+        'CONFLICT',
+        'task.pausedSend',
+        undefined,
+        'La tâche est en pause : reprenez-la pour continuer.',
+      );
+    if (task.status === 'failed')
+      throw localizedError(
+        'CONFLICT',
+        'task.failedSend',
+        undefined,
+        'La tâche est en échec : redémarrez-la pour relancer ses étapes.',
+      );
+    if (task.status === 'draft')
+      throw localizedError('CONFLICT', 'task.draftSend', undefined, 'La tâche n’est pas démarrée.');
     const occupied = task.subtasks.find(
-      (o) => o.id !== sub.id && (o.status === 'running' || o.status === 'waiting_approval') && (sharesWorktree(task.orchestration) || (o.worktreeId !== null && o.worktreeId === sub.worktreeId)),
+      (o) =>
+        o.id !== sub.id &&
+        (o.status === 'running' || o.status === 'waiting_approval') &&
+        (sharesWorktree(task.orchestration) ||
+          (o.worktreeId !== null && o.worktreeId === sub.worktreeId)),
     );
     if (occupied) {
-      throw localizedError('CONFLICT', 'lane.occupied', { step: occupied.title }, `L’étape « ${occupied.title} » travaille déjà dans ce worktree : attendez qu’elle termine.`);
+      throw localizedError(
+        'CONFLICT',
+        'lane.occupied',
+        { step: occupied.title },
+        `L’étape « ${occupied.title} » travaille déjà dans ce worktree : attendez qu’elle termine.`,
+      );
     }
     /* Changing an earlier step after its dependents ran would leave their results and handoffs stale. */
-    const dependent = task.subtasks.find((o) => o.id !== sub.id && subtaskDependencies(task, o).includes(sub.id) && o.status !== 'pending' && o.status !== 'cancelled');
+    const dependent = task.subtasks.find(
+      (o) =>
+        o.id !== sub.id &&
+        subtaskDependencies(task, o).includes(sub.id) &&
+        o.status !== 'pending' &&
+        o.status !== 'cancelled',
+    );
     if (dependent) {
-      throw localizedError('CONFLICT', 'lane.dependentsDone', { step: dependent.title }, `L’étape « ${dependent.title} » s’appuie déjà sur ce travail : redémarrez la tâche pour relancer la chaîne.`);
+      throw localizedError(
+        'CONFLICT',
+        'lane.dependentsDone',
+        { step: dependent.title },
+        `L’étape « ${dependent.title} » s’appuie déjà sur ce travail : redémarrez la tâche pour relancer la chaîne.`,
+      );
     }
   }
 
@@ -513,12 +835,17 @@ export class TaskService {
     if (!sub) return;
     if (session.status === 'disconnected') {
       /* Only an agent that was working interrupts the task; an idle one (task in review) does not. */
-      if (sub.status === 'running' || sub.status === 'waiting_approval') await this.save(task, 'paused');
+      if (sub.status === 'running' || sub.status === 'waiting_approval')
+        await this.save(task, 'paused');
       return;
     }
     const status = SUBTASK_STATUS_FROM_SESSION[session.status];
     if (!status) return;
-    task = patchSubtask(task, sub.id, status === 'failed' ? { status, error: session.error ?? sub.error } : { status });
+    task = patchSubtask(
+      task,
+      sub.id,
+      status === 'failed' ? { status, error: session.error ?? sub.error } : { status },
+    );
     await this.advance(task, status === 'failed' ? (session.error ?? undefined) : undefined);
   }
 }

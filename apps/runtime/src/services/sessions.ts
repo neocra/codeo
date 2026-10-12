@@ -46,6 +46,8 @@ export interface SessionPlacement {
   cwd?: string | undefined;
   worktreeId: string | null;
   subtaskId: string | null;
+  /** The caller already holds the lane's path lock (scheduler launch): do not take it again. */
+  laneLockHeld?: boolean | undefined;
 }
 
 /** Worktree locks are keyed by directory: a recreated lane gets a new id but the same path, and old sessions keep that path. */
@@ -237,7 +239,7 @@ export class SessionService {
     };
     await this.repo.upsert(session);
     this.bus.publish('SessionCreated', { session });
-    return placement?.worktreeId
+    return placement?.worktreeId && !placement.laneLockHeld
       ? this.worktreeLocks.run(laneKey(cwd), () => this.launch(session, input.prompt))
       : this.launch(session, input.prompt);
   }
@@ -355,14 +357,25 @@ export class SessionService {
         persisted.status === 'failed')
     ) {
       live.interrupting = true;
-      await live.handle
-        .close()
-        .catch((e) =>
-          this.log.warn('could not close a provider started for a cancelled session', {
+      try {
+        await live.handle.close();
+      } catch (closeErr) {
+        /* The provider may still be running: keep it tracked so stops and worktree removal see the owner. */
+        this.live.set(sessionId, live);
+        this.log.error('could not close a provider started for a cancelled session', {
+          sessionId,
+          err: String(closeErr),
+        });
+        throw new RuntimeError(
+          'INTERNAL',
+          'Démarrage interrompu et agent toujours actif : arrêtez la session avant de réessayer.',
+          {
+            key: 'session.startFailedLive',
+            params: { reason: closeErr instanceof Error ? closeErr.message : String(closeErr) },
             sessionId,
-            err: String(e),
-          }),
+          },
         );
+      }
       throw localizedError(
         'CONFLICT',
         'session.cancelledDuringStart',
