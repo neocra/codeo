@@ -21,7 +21,15 @@ export function TaskDetail({ task }: { task: Task }) {
   const worktrees = useWorktrees(task.id);
   const sessions = useSessions(task.workspaceId);
   /* A pause that could not stop every agent leaves sessions active: the runtime expects the pause to be retried. */
-  const stopPending = task.status === 'paused' && task.subtasks.some((s) => s.sessionId && (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval')));
+  /* A successful pause cancels the sessions; any still running, waiting or idle session of an active step means the stop failed. */
+  const stopPending =
+    task.status === 'paused' &&
+    task.subtasks.some(
+      (s) =>
+        (s.status === 'running' || s.status === 'waiting_approval') &&
+        s.sessionId &&
+        (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval' || x.status === 'idle')),
+    );
   const [error, setError] = useState<string | null>(null);
   const onError = (e: unknown) => setError(describeError(e, t));
   /* A new attempt clears the previous failure so a successful retry never keeps a stale banner. */

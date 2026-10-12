@@ -408,6 +408,21 @@ export class SessionService {
     return session;
   }
 
+  /**
+   * Persists what was still streaming when the provider went away (a pump can close without
+   * text_complete/turn_completed): the coalescing timer is cancelled and buffered entries are finalised.
+   */
+  private async finalizeStreaming(session: AgentSession, live: Live): Promise<void> {
+    if (live.flushTimer) {
+      clearTimeout(live.flushTimer);
+      live.flushTimer = null;
+    }
+    for (const [id, entry] of live.streaming) {
+      live.streaming.delete(id);
+      await this.update(session, { ...entry, streaming: false });
+    }
+  }
+
   /** Runs `fn` under the session's worktree lock (none when the session is not in a worktree). */
   private inWorktree<T>(session: AgentSession, fn: () => Promise<T>): Promise<T> {
     return session.worktreeId ? this.worktreeLocks.run(laneKey(session.cwd), fn) : fn();
@@ -432,7 +447,10 @@ export class SessionService {
       /* The live entry goes only once the provider is really gone, so a failed close stays visible and retryable. */
       await live.handle.close();
       this.live.delete(sessionId);
-      await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', key: 'stoppedByUser', params: null, text: 'Session arrêtée par l’utilisateur.' }));
+      await this.serialize(live, async () => {
+        await this.finalizeStreaming(session, live);
+        await this.append(session, live, { kind: 'system', level: 'info', key: 'stoppedByUser', params: null, text: 'Session arrêtée par l’utilisateur.' });
+      });
     }
     return this.setStatus(await this.get(sessionId), 'cancelled');
   }
@@ -454,7 +472,10 @@ export class SessionService {
     live.interrupting = true;
     await live.handle.close();
     this.live.delete(sessionId);
-    await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', key: reason.key, params: reason.params ?? null, text: reason.text }));
+    await this.serialize(live, async () => {
+      await this.finalizeStreaming(session, live);
+      await this.append(session, live, { kind: 'system', level: 'info', key: reason.key, params: reason.params ?? null, text: reason.text });
+    });
     return this.setStatus(await this.get(sessionId), 'completed');
   }
 
@@ -468,8 +489,9 @@ export class SessionService {
       await live.handle.close().catch((err) => this.log.warn('provider close failed at shutdown', { id, err: String(err) }));
       /* Events the adapter emitted before closing are still queued on the chain: let them land before the status flips. */
       await live.chain.catch(() => undefined);
-      this.live.delete(id);
       const s = await this.repo.get(id);
+      if (s) await this.finalizeStreaming(s, live).catch((err) => this.log.warn('could not finalise streaming entries', { id, err: String(err) }));
+      this.live.delete(id);
       if (s) await this.setStatus(s, 'disconnected', 'Runtime arrêté.');
     }
   }
