@@ -429,6 +429,15 @@ describe('shutdown', () => {
     await rt.shutdown();
     const reopened = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false });
     expect((await reopened.services.tasks.get(task.id)).status).toBe('review');
+    /* Removing the reviewed worktree after the restart closes its disconnected owner cleanly: no failure anywhere. */
+    const [wt] = await reopened.services.worktrees.list({ taskId: task.id });
+    const owner = (await reopened.services.sessions.list({ taskId: task.id }))[0]!;
+    expect(owner.status).toBe('disconnected');
+    await reopened.call('worktrees.remove', { worktreeId: wt!.id, force: true }, { scopes: ['read', 'session:write', 'approval:decide', 'workspace:admin'], clientKind: 'test' });
+    expect((await reopened.services.sessions.get(owner.id)).status).toBe('completed');
+    const after = await reopened.services.tasks.get(task.id);
+    expect(after.status).toBe('review');
+    expect(after.subtasks[0]?.status).toBe('completed');
     await reopened.shutdown();
     for (const w of await git(['worktree', 'list', '--porcelain'], { cwd: repoDir }).then((r) => r.stdout.split('\n').filter((l) => l.startsWith('worktree ') && l.includes(dir)))) {
       await git(['worktree', 'remove', '--force', w.slice(9)], { cwd: repoDir });

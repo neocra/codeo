@@ -31,7 +31,8 @@ const SESSION_TRANSITIONS: Record<SessionStatus, readonly SessionStatus[]> = {
   completed: ['running'],
   failed: ['running'],
   cancelled: ['running'],
-  disconnected: ['running', 'failed'],
+  /* `completed` closes a disconnected session cleanly (e.g. its reviewed worktree is removed after a restart). */
+  disconnected: ['running', 'failed', 'completed'],
 };
 
 const APPROVAL_TRANSITIONS: Record<ApprovalRequest['status'], readonly ApprovalRequest['status'][]> = {
