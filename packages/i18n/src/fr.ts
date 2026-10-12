@@ -249,6 +249,8 @@ export const fr = {
   'role.devops': 'DevOps',
   'role.developer': 'Implémentation',
 
+  'session.system.stoppedByUser': 'Session arrêtée par l’utilisateur.',
+  'session.system.worktreeRemoved': 'Session fermée : le worktree a été supprimé.',
   'runtime.error.disconnected': 'Runtime non connecté.',
   'runtime.error.repo.notFound': 'Dépôt introuvable : {id}',
   'runtime.error.worktree.notFound': 'Worktree introuvable : {id}',

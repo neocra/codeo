@@ -82,7 +82,13 @@ export class TaskService {
       await this.locked(id, async () => {
         let t = await this.get(id);
         t = await this.reconcileAssignments(t);
-        if (t.status === 'running' || t.status === 'waiting_approval' || t.status === 'queued') await this.save(t, 'paused');
+        if (t.status === 'running' || t.status === 'waiting_approval' || t.status === 'queued') {
+          /* Work that still has active or runnable steps waits for the user (paused); settled work gets its final status now. */
+          for (const b of blockedSubtasks(t)) t = patchSubtask(t, b.id, { status: 'cancelled' });
+          const active = t.subtasks.some((s) => s.status === 'running' || s.status === 'waiting_approval') || runnableSubtasks(t).length > 0;
+          if (active) await this.save(t, 'paused', { subtasks: t.subtasks });
+          else await this.save(t, aggregateTaskStatus(t), { subtasks: t.subtasks, progress: taskProgress(t) }, t.subtasks.find((s) => s.status === 'failed' && s.error)?.error ?? undefined);
+        }
       });
     }
   }
@@ -185,14 +191,16 @@ export class TaskService {
       throw localizedError('INVALID_PARAMS', 'plan.parallelNeedsWorktree', undefined, 'Des agents en parallèle doivent travailler dans des worktrees isolés.');
     }
 
-    const repositoryIds = input.repositoryIds.length ? [...input.repositoryIds] : ws.repositories.slice(0, 1).map((r) => r.id);
+    /* The workspace's first repository is only a fallback for agents that pick none; it joins the task's list only when used. */
+    const fallbackRepositoryId = ws.repositories[0]?.id ?? null;
+    const repositoryIds = [...input.repositoryIds];
     const taskId = newId('task');
     const subIds = plans.map(() => newId('sub'));
     const subtasks: Subtask[] = plans.map((p, i) => {
       if (p.repositoryId && !known(p.repositoryId)) throw localizedError('INVALID_PARAMS', 'repo.unknown', { id: p.repositoryId }, `Dépôt inconnu: ${p.repositoryId}`);
       if (p.dependsOn.some((d) => d >= i)) throw localizedError('INVALID_PARAMS', 'plan.dependsEarlier', undefined, 'Une sous-tâche ne peut dépendre que d’une sous-tâche précédente.');
       if (mode === 'best-of-n' && p.dependsOn.length) throw localizedError('INVALID_PARAMS', 'plan.bestOfNIndependent', undefined, 'Les candidats Best-of-N sont indépendants.');
-      const repositoryId = p.repositoryId ?? repositoryIds[0] ?? null;
+      const repositoryId = p.repositoryId ?? input.repositoryIds[0] ?? fallbackRepositoryId;
       if (repositoryId && !repositoryIds.includes(repositoryId)) repositoryIds.push(repositoryId);
       /* Best-of-N candidates all attempt the same objective. */
       const instructions = (mode === 'best-of-n' ? '' : p.instructions.trim()) || objective || title;
@@ -313,6 +321,10 @@ export class TaskService {
           await this.sessions.send(sub.sessionId, RESUME_PROMPT, { fromScheduler: true });
           task = patchSubtask(task, sub.id, { status: 'running' });
         } catch (err) {
+          if (sub.sessionId && this.sessions.isLive(sub.sessionId)) {
+            /* The failed send left a live handle (close failed too): never launch a second agent beside it. */
+            throw localizedError('CONFLICT', 'task.stopPending', { steps: sub.title }, `Un agent est encore actif (${sub.title}) : réessayez la mise en pause avant de reprendre.`);
+          }
           /* The provider conversation cannot be resumed: start the subtask over, in the same worktree. */
           this.log.warn('subtask restarted instead of resumed', { taskId, subtaskId: sub.id, err: String(err) });
           task = patchSubtask(task, sub.id, { status: 'pending', sessionId: null });

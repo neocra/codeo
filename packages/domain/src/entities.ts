@@ -247,7 +247,18 @@ export const SessionEntrySchema = z.discriminatedUnion('kind', [
     status: z.enum(['running', 'completed', 'failed', 'denied']).default('running'),
     output: z.string().nullable().default(null),
   }),
-  z.object({ kind: z.literal('system'), id: IdSchema, sessionId: IdSchema, seq: z.number().int(), at: IsoDateSchema, text: z.string(), level: z.enum(['info', 'warn', 'error']).default('info') }),
+  z.object({
+    kind: z.literal('system'),
+    id: IdSchema,
+    sessionId: IdSchema,
+    seq: z.number().int(),
+    at: IsoDateSchema,
+    text: z.string(),
+    level: z.enum(['info', 'warn', 'error']).default('info'),
+    /** Stable key (`session.system.<key>` in i18n) so clients can translate; `text` is the French fallback. */
+    key: z.string().nullable().default(null),
+    params: z.record(z.string(), z.union([z.string(), z.number()])).nullable().default(null),
+  }),
   z.object({
     kind: z.literal('result'),
     id: IdSchema,

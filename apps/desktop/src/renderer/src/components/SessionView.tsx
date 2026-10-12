@@ -2,11 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { SessionEntry } from '@codeo/domain';
 import { AgentMessage, Avatar, Button, Icon, StatusPill, Textarea } from '@codeo/ui-desktop';
+import { locales } from '@codeo/i18n';
 import { describeError, invoke } from '../lib/api';
 import { formatRelative, useT } from '../lib/i18n';
 import { keys, usePendingApprovals, useSession } from '../lib/queries';
 import { ApprovalItem } from './ApprovalItem';
 import { providerName, sessionTone } from './status';
+
+/** System entries carry a key so each locale renders its own wording; the stored text is the fallback. */
+function systemText(entry: Extract<SessionEntry, { kind: 'system' }>, t: ReturnType<typeof useT>): string {
+  const key = entry.key ? `session.system.${entry.key}` : null;
+  if (key && key in locales.fr) return t(key as keyof typeof locales.fr, entry.params ?? undefined);
+  return entry.text;
+}
 
 function fmtTime(iso: string) {
   const d = new Date(iso);
@@ -71,7 +79,7 @@ function Entry({ entry, author }: { entry: SessionEntry; author: string }) {
     case 'tool_call':
       return <ToolCall entry={entry} />;
     case 'system':
-      return <div className={`cd-sysmsg${entry.level === 'error' ? ' cd-sysmsg--error' : ''}`}>{entry.text}</div>;
+      return <div className={`cd-sysmsg${entry.level === 'error' ? ' cd-sysmsg--error' : ''}`}>{systemText(entry, t)}</div>;
     case 'result':
       return (
         <div className={`cd-result ${entry.ok ? 'cd-result--ok' : 'cd-result--error'}`}>

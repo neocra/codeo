@@ -235,6 +235,8 @@ export const en: Record<MessageKey, string> = {
   'role.reviewer': 'Code review',
   'role.devops': 'DevOps',
   'role.developer': 'Implementation',
+  'session.system.stoppedByUser': 'Session stopped by the user.',
+  'session.system.worktreeRemoved': 'Session closed: the worktree was removed.',
   'runtime.error.disconnected': 'Runtime not connected.',
   'runtime.error.repo.notFound': 'Repository not found: {id}',
   'runtime.error.worktree.notFound': 'Worktree not found: {id}',

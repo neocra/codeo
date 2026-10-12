@@ -39,6 +39,13 @@ export function laneKey(dir: string): string {
 }
 
 export type SessionOperation = 'send' | 'cancel';
+
+/** A persisted system message: translatable key + French fallback text. */
+export interface SystemNote {
+  key: string;
+  text: string;
+  params?: Record<string, string | number>;
+}
 export type SendInterceptor = (session: AgentSession, next: () => Promise<AgentSession>, operation: SessionOperation) => Promise<AgentSession>;
 
 export interface SessionListener {
@@ -334,12 +341,12 @@ export class SessionService {
           live.tools.delete(ev.toolUseId);
           await this.update(session, { ...entry, status: 'denied', output: ev.reason });
         } else {
-          await this.append(session, live, { kind: 'system', level: 'warn', text: `Outil refusé : ${ev.reason}` });
+          await this.append(session, live, { kind: 'system', level: 'warn', key: null, params: null, text: `Outil refusé : ${ev.reason}` });
         }
         return;
       }
       case 'system':
-        await this.append(session, live, { kind: 'system', level: ev.level, text: ev.text });
+        await this.append(session, live, { kind: 'system', level: ev.level, key: null, params: null, text: ev.text });
         return;
       case 'turn_completed': {
         for (const [id, e] of live.streaming) {
@@ -359,7 +366,7 @@ export class SessionService {
         return;
       }
       case 'error': {
-        await this.append(session, live, { kind: 'system', level: 'error', text: ev.message });
+        await this.append(session, live, { kind: 'system', level: 'error', key: null, params: null, text: ev.message });
         if (ev.fatal) {
           this.live.delete(sessionId);
           this.approvals.cancelForSession(sessionId);
@@ -420,19 +427,19 @@ export class SessionService {
       /* The live entry goes only once the provider is really gone, so a failed close stays visible and retryable. */
       await live.handle.close();
       this.live.delete(sessionId);
-      await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', text: 'Session arrêtée par l’utilisateur.' }));
+      await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', key: 'stoppedByUser', params: null, text: 'Session arrêtée par l’utilisateur.' }));
     }
     return this.setStatus(await this.get(sessionId), 'cancelled');
   }
 
   /** Closes an idle session's provider process (e.g. its worktree is being removed). Running sessions are refused. */
-  async release(sessionId: string, reason: string): Promise<AgentSession> {
+  async release(sessionId: string, reason: SystemNote): Promise<AgentSession> {
     const session = await this.get(sessionId);
     return this.inWorktree(session, () => this.releaseUnlocked(sessionId, reason));
   }
 
   /** Release without taking the worktree lock — for callers that already hold it (worktree removal). */
-  async releaseUnlocked(sessionId: string, reason: string): Promise<AgentSession> {
+  async releaseUnlocked(sessionId: string, reason: SystemNote): Promise<AgentSession> {
     const session = await this.get(sessionId);
     const live = this.live.get(sessionId);
     if (!live) return session;
@@ -442,7 +449,7 @@ export class SessionService {
     live.interrupting = true;
     await live.handle.close();
     this.live.delete(sessionId);
-    await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', text: reason }));
+    await this.serialize(live, () => this.append(session, live, { kind: 'system', level: 'info', key: reason.key, params: reason.params ?? null, text: reason.text }));
     return this.setStatus(await this.get(sessionId), 'completed');
   }
 
