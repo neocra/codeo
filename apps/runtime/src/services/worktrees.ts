@@ -3,10 +3,30 @@ import path from 'node:path';
 import { localizedError } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import { sharesWorktree, type Repository, type Subtask, type Task, type Worktree } from '@codeo/domain';
-import { createWorktree, isDirty, listWorktrees, pruneWorktrees, removeWorktree, resolveCommit, worktreeIdentity } from '@codeo/git';
+import { createWorktree, forgetMissingWorktree, isDirty, listWorktrees, removeWorktree, resolveCommit, worktreeIdentity } from '@codeo/git';
 import { newId, type KeyedLock, type Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import type { WorkspaceService } from './workspaces';
+
+/**
+ * Canonical form of a path that may not exist (yet / any more): the nearest existing ancestor is resolved
+ * through symlinks and short names (macOS /tmp → /private/tmp, Windows 8.3 names), the rest re-appended.
+ */
+export function canonicalPath(p: string): string {
+  const absolute = path.resolve(p);
+  const missing: string[] = [];
+  let probe = absolute;
+  for (;;) {
+    try {
+      return path.join(realpathSync.native(probe), ...missing);
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) return absolute;
+      missing.unshift(path.basename(probe));
+      probe = parent;
+    }
+  }
+}
 
 /** `PROJ-12 Fix the login` → `proj-12-fix-the-login` (ASCII, git-safe). */
 export function branchSlug(text: string): string {
@@ -58,6 +78,12 @@ export class WorktreeService {
   }
 
   /** The git worktree registered at `dir`, if any; git reports canonical paths (e.g. /private/tmp on macOS). */
+  /** Removes git's registration of a lane whose directory is gone — and nothing else. A no-op when git has none. */
+  private async forgetRegistration(repositoryPath: string, dir: string): Promise<void> {
+    const registered = (await listWorktrees(repositoryPath).catch(() => [])).some((w) => canonicalPath(w.path) === canonicalPath(dir));
+    if (registered) await forgetMissingWorktree(repositoryPath, dir);
+  }
+
   /** Throws unless git still registers the lane's directory as a worktree on its branch (resume safety). */
   async assertIntact(id: string): Promise<Worktree> {
     const worktree = await this.get(id);
@@ -72,13 +98,7 @@ export class WorktreeService {
   }
 
   private async registeredWorktree(repositoryPath: string, dir: string): Promise<{ path: string; branch: string | null } | null> {
-    const real = (p: string) => {
-      try {
-        return realpathSync.native(p);
-      } catch {
-        return path.resolve(p);
-      }
-    };
+    const real = canonicalPath;
     const target = real(dir);
     const registered = (await listWorktrees(repositoryPath).catch(() => [])).find((w) => real(w.path) === target) ?? null;
     if (!registered) return null;
@@ -118,8 +138,8 @@ export class WorktreeService {
     if (existing) {
       /* Directory deleted outside Codeo: forget it and clear git's stale registration; the branch is reattached below. */
       this.log.warn('worktree directory missing, recreating', { id: existing.id, path: existing.path });
-      /* Prune first: if it fails the row survives and the next attempt retries from here. */
-      await pruneWorktrees(repository.path);
+      /* Forget this lane's registration first (only it): if that fails the row survives and the next attempt retries. */
+      await this.forgetRegistration(repository.path, existing.path);
       await this.repo.delete(existing.id);
     }
     const baseBranch = await this.baseRef(repository);
@@ -137,7 +157,7 @@ export class WorktreeService {
       this.log.warn('adopting worktree left by an interrupted run', { path: target, branch });
     } else {
       /* A registration left by a run that died before the row insert (directory since deleted) would block the reattach. */
-      await pruneWorktrees(repository.path);
+      await this.forgetRegistration(repository.path, target);
       try {
         await createWorktree({ root: repository.path, path: target, branch, baseBranch });
         created = true;
@@ -189,8 +209,8 @@ export class WorktreeService {
       await opts.beforeRemove?.();
       /* Directory gone (deleted outside Codeo): clear git's stale registration so the branch can be reattached later. */
       const repository = (await this.workspaces.get(worktree.workspaceId).catch(() => null))?.repositories.find((r) => r.id === worktree.repositoryId);
-      /* A repository that was itself deleted or moved cannot be pruned; its stale metadata must not block removal. */
-      if (repository && existsSync(repository.path)) await pruneWorktrees(repository.path);
+      /* A repository that was itself deleted or moved cannot be updated; its stale metadata must not block removal. */
+      if (repository && existsSync(repository.path)) await this.forgetRegistration(repository.path, worktree.path);
     }
     await this.repo.delete(id);
     this.bus.publish('WorktreeRemoved', { worktreeId: id, taskId: worktree.taskId });

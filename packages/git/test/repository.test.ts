@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { branchExists, createWorktree, git, inspectRepository, removeWorktree, resolveCommit, worktreeIdentity } from '../src/index';
+import { branchExists, createWorktree, forgetMissingWorktree, git, inspectRepository, removeWorktree, resolveCommit, worktreeIdentity } from '../src/index';
 
 let dir: string;
 beforeAll(async () => {
@@ -89,6 +89,21 @@ describe('worktrees', () => {
     expect(await worktreeIdentity(outside)).toBeNull();
     rmSync(outside, { recursive: true, force: true });
     await git(['worktree', 'prune'], { cwd: dir });
+  });
+
+  it('forgets one missing worktree registration and keeps the others', async () => {
+    const a = path.join(dir, '.worktrees', 'gone');
+    const b = path.join(dir, '.worktrees', 'kept');
+    await createWorktree({ root: dir, path: a, branch: 'feature/gone', baseBranch: 'main' });
+    await createWorktree({ root: dir, path: b, branch: 'feature/kept', baseBranch: 'main' });
+    rmSync(a, { recursive: true, force: true });
+    rmSync(b, { recursive: true, force: true });
+    await expect(forgetMissingWorktree(dir, path.join(dir, 'README.md'))).rejects.toThrow(/still exists/);
+    await forgetMissingWorktree(dir, a);
+    const left = (await inspectRepository(dir)).worktrees.map((w) => w.branch);
+    expect(left).not.toContain('feature/gone');
+    expect(left).toContain('feature/kept');
+    await forgetMissingWorktree(dir, b);
   });
 
   it('rejects dangerous branch names', async () => {

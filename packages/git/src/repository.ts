@@ -91,11 +91,14 @@ export async function worktreeIdentity(dir: string): Promise<{ commonDir: string
 }
 
 /**
- * Drops git's registrations of worktrees whose directories no longer exist — immediately: callers have already
- * confirmed the directory is gone, and the default `gc.worktreePruneExpire` grace period would keep the entry.
+ * Drops git's registration of ONE worktree whose directory no longer exists, leaving every other registration
+ * (e.g. a worktree on a disconnected volume) untouched. Refuses when the directory still exists.
  */
-export async function pruneWorktrees(root: string): Promise<void> {
-  await git(['worktree', 'prune', '--expire', 'now'], { cwd: assertAbsolutePath(root, 'root') });
+export async function forgetMissingWorktree(root: string, worktreePath: string): Promise<void> {
+  const r = assertAbsolutePath(root, 'root');
+  const w = assertAbsolutePath(worktreePath, 'worktree path');
+  if (existsSync(w)) throw new Error(`Worktree directory still exists, refusing to forget it: ${w}`);
+  await git(['worktree', 'remove', '--force', w], { cwd: r, timeoutMs: 60_000 });
 }
 
 /** `-z` keeps paths verbatim (without it, git C-quotes non-ASCII paths such as a user profile with accents). */
