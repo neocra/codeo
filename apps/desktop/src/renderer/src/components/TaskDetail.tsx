@@ -30,6 +30,10 @@ export function TaskDetail({ task }: { task: Task }) {
         s.sessionId &&
         (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval' || x.status === 'idle')),
     );
+  /* A cancel whose provider close failed persisted `cancelled` but left the handle live: offer the retry (tasks.cancel is idempotent). */
+  const cancelStopPending =
+    task.status === 'cancelled' &&
+    task.subtasks.some((s) => s.sessionId && (sessions.data ?? []).some((x) => x.id === s.sessionId && (x.status === 'running' || x.status === 'waiting_approval' || x.status === 'idle')));
   const [error, setError] = useState<string | null>(null);
   const onError = (e: unknown) => setError(describeError(e, t));
   /* A new attempt clears the previous failure so a successful retry never keeps a stale banner. */
@@ -104,6 +108,11 @@ export function TaskDetail({ task }: { task: Task }) {
           ) : null}
           {stopPending ? (
             <Button variant="secondary" size="sm" icon="stop" loading={pause.isPending} onClick={() => pause.mutate()}>
+              {t('action.retryStop')}
+            </Button>
+          ) : null}
+          {cancelStopPending ? (
+            <Button variant="secondary" size="sm" icon="stop" loading={cancel.isPending} onClick={() => cancel.mutate()}>
               {t('action.retryStop')}
             </Button>
           ) : null}

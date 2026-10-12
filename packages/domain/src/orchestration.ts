@@ -68,8 +68,9 @@ export function blockedSubtasks(plan: Plan): Subtask[] {
 }
 
 /**
- * The task status implied by its subtasks. Best-of-N succeeds as soon as one candidate
- * completed; other modes fail when any subtask failed.
+ * The task status implied by its subtasks. A task stays running while any candidate is still
+ * pending or running; once every subtask has settled, Best-of-N reaches review if at least one
+ * candidate completed (the human picks one), other modes fail when any subtask failed.
  */
 export function aggregateTaskStatus(plan: Plan): TaskStatus {
   const statuses = plan.subtasks.map((s) => s.status);
