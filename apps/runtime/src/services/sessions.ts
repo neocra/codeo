@@ -484,6 +484,8 @@ export class SessionService {
   }
 
   async shutdown(): Promise<void> {
+    /* Admission closes first: a sessions.start racing this sweep must not spawn a provider after the map was walked. */
+    this.closed = true;
     for (const [id, live] of this.live) {
       live.interrupting = true;
       await live.handle.close().catch((err) => this.log.warn('provider close failed at shutdown', { id, err: String(err) }));
