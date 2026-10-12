@@ -270,6 +270,7 @@ export const en: Record<MessageKey, string> = {
   'runtime.error.lane.dependentsDone': 'Step “{step}” already builds on this work: restart the task to rerun the chain.',
   'runtime.error.session.startFailed': 'The session failed to start: {reason}',
   'runtime.error.session.startFailedLive': 'Startup was interrupted and the agent is still active ({reason}): stop the session before retrying.',
+  'runtime.error.session.stopPending': 'Stopping this session did not complete: retry the stop before sending a message.',
   'runtime.error.session.replaced': 'This session was replaced by a new attempt: open the step’s current session.',
   'runtime.error.session.dirGone': 'This session’s working directory no longer exists ({path}): the worktree was removed.',
   'runtime.error.session.noProviderId': 'This session cannot be resumed (no provider identifier).',

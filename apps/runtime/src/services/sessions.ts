@@ -394,6 +394,11 @@ export class SessionService {
       return this.launch(session, text);
     }
     if (session.status === 'waiting_approval') throw localizedError('CONFLICT', 'session.awaitingApproval', undefined, 'Répondez d’abord à la demande d’approbation.');
+    if (live.interrupting) {
+      /* A stop that could not close the provider is still pending: no new turn until it is retried, otherwise a later
+         provider failure would be misread as the interruption. */
+      throw localizedError('CONFLICT', 'session.stopPending', undefined, 'L’arrêt de cette session n’a pas abouti : réessayez l’arrêt avant d’envoyer un message.');
+    }
     session = await this.serialize(live, async () => {
       const s = await this.setStatus(await this.get(sessionId), 'running');
       await this.append(s, live, { kind: 'user_message', text });
