@@ -11,6 +11,18 @@ export interface RuntimeStatus {
   error: string | null;
 }
 
+export type UpdateState = 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'manual' | 'error' | 'unsupported';
+
+export interface UpdateStatus {
+  state: UpdateState;
+  currentVersion: string;
+  availableVersion: string | null;
+  releaseUrl: string;
+  /** Download progress in percent while `downloading`. */
+  progress: number | null;
+  error: string | null;
+}
+
 /** The entire surface the renderer gets. Nothing else from Node or Electron is reachable. */
 export interface CodeoBridge {
   platform: 'darwin' | 'win32' | 'linux' | (string & {});
@@ -24,6 +36,11 @@ export interface CodeoBridge {
   getPreference<T>(key: string, fallback: T): Promise<T>;
   setPreference(key: string, value: unknown): Promise<void>;
   userName(): Promise<string>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  installUpdate(): Promise<UpdateStatus>;
+  getUpdateStatus(): Promise<UpdateStatus>;
+  onUpdateStatus(listener: (status: UpdateStatus) => void): () => void;
+  openReleasePage(): Promise<void>;
 }
 
 export const IPC = {
@@ -36,4 +53,9 @@ export const IPC = {
   getPreference: 'codeo:get-preference',
   setPreference: 'codeo:set-preference',
   userName: 'codeo:user-name',
+  updateCheck: 'codeo:update-check',
+  updateInstall: 'codeo:update-install',
+  updateStatus: 'codeo:update-status',
+  getUpdateStatus: 'codeo:get-update-status',
+  openReleasePage: 'codeo:open-release-page',
 } as const;

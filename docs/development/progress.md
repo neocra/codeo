@@ -45,7 +45,7 @@ _Updated: 2026-10-11_
 - Task completion (`review` → `completed`) has no command yet; it belongs to the phase 5 review flow.
 - Demo mode with the Elyndor / Codeo Cloud datasets: not yet implemented.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox (`workspace-write`).
-- Packaging: electron-builder config is present but unsigned builds have not been produced in CI yet.
+- Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
 import { captureScreens } from './screenshots';
+import { UpdateService } from './updates';
 import WebSocket from 'ws';
 import { CommandNameSchema, commands, RuntimeError } from '@codeo/contracts';
 import { RuntimeClient } from '@codeo/remote-client';
@@ -18,6 +19,7 @@ const prefsFile = path.join(dataDir, 'desktop-preferences.json');
 let mainWindow: BrowserWindow | null = null;
 let client: RuntimeClient | null = null;
 const runtimeProcess = new RuntimeProcess(dataDir);
+const updates = new UpdateService();
 let status: RuntimeStatus = { state: 'starting', info: null, error: null };
 
 function setStatus(next: Partial<RuntimeStatus>) {
@@ -70,6 +72,7 @@ function createWindow() {
     trafficLightPosition: { x: 16, y: 14 },
     webPreferences: {
       preload: path.join(import.meta.dirname, '../preload/index.cjs'),
+      additionalArguments: [`--codeo-app-version=${app.getVersion()}`],
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -78,6 +81,7 @@ function createWindow() {
     },
   });
   mainWindow = win;
+  updates.attach(win);
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => {
     mainWindow = null;
@@ -128,6 +132,10 @@ function registerIpc() {
     writeFileSync(prefsFile, JSON.stringify(prefs, null, 2));
     if (key === 'theme' && (value === 'dark' || value === 'light' || value === 'system')) nativeTheme.themeSource = value;
   });
+  ipcMain.handle(IPC.updateCheck, () => updates.check());
+  ipcMain.handle(IPC.updateInstall, () => updates.install());
+  ipcMain.handle(IPC.getUpdateStatus, () => updates.current);
+  ipcMain.handle(IPC.openReleasePage, () => updates.openReleasePage());
   ipcMain.handle(IPC.userName, () => {
     const info = os.userInfo();
     const full = (process.env['CODEO_USER_NAME'] ?? info.username).split(/[._-]/)[0] ?? info.username;

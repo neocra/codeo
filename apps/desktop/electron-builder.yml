@@ -1,40 +1,54 @@
 appId: com.codeo.desktop
 productName: Codeo
+copyright: Copyright © 2026 Neocra
 directories:
   output: release
   buildResources: resources
+# The renderer, preload and main are fully bundled by electron-vite; only electron-updater ships from node_modules.
 files:
   - out/**
   - package.json
+  - '!**/*.map'
 extraResources:
-  - from: ../runtime/dist
+  # Self-contained runtime (see scripts/prepare-runtime.mjs): main.js + migrations + flat node_modules.
+  # node_modules is listed separately because electron-builder's matcher skips node_modules folders by default.
+  - from: runtime-bundle
     to: runtime
+    filter: ['**/*', '!node_modules/**']
+  - from: runtime-bundle/node_modules
+    to: runtime/node_modules
     filter: ['**/*']
-  - from: ../../node_modules/@anthropic-ai
-    to: runtime/node_modules/@anthropic-ai
-  - from: ../../node_modules/@openai
-    to: runtime/node_modules/@openai
-  - from: ../../node_modules/@libsql
-    to: runtime/node_modules/@libsql
-  - from: ../../node_modules/libsql
-    to: runtime/node_modules/libsql
-  - from: ../../node_modules/drizzle-orm
-    to: runtime/node_modules/drizzle-orm
-  - from: ../../node_modules/ws
-    to: runtime/node_modules/ws
-  - from: ../../node_modules/zod
-    to: runtime/node_modules/zod
+# Keeps only the packed architecture's native packages when the bundle holds several (CODEO_RUNTIME_EXTRA_ARCH).
+afterPack: scripts/after-pack.cjs
 asarUnpack:
   - '**/*.node'
+publish:
+  provider: github
+  owner: neocra
+  repo: codeo
+  releaseType: release
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 mac:
   category: public.app-category.developer-tools
-  target: [dmg, zip]
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
   hardenedRuntime: true
+  gatekeeperAssess: false
   entitlementsInherit: resources/entitlements.mac.plist
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  notarize: false
 win:
-  target: [nsis]
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
 linux:
   target: [AppImage, deb]
   category: Development
+  maintainer: Neocra
 npmRebuild: false
