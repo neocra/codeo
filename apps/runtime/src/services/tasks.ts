@@ -238,6 +238,7 @@ export class TaskService {
       if (!known(id))
         throw localizedError('INVALID_PARAMS', 'repo.unknown', { id }, `Dépôt inconnu: ${id}`);
     const mode = input.orchestration;
+    const taskExecutionMode = input.executionMode ?? ws.defaultExecutionMode;
     const title = input.title.trim();
     const objective = input.objective.trim();
     const plans = input.subtasks.length
@@ -314,7 +315,7 @@ export class TaskService {
         taskId,
         title: p.title.trim() || (plans.length > 1 ? `${title} · ${i + 1}` : title),
         instructions,
-        assignment: { role: p.role, provider: p.provider, model: p.model },
+        assignment: { role: p.role, provider: p.provider, model: p.model, executionMode: p.executionMode ?? taskExecutionMode },
         repositoryId,
         dependsOn: p.dependsOn.map((d) => subIds[d]!),
         status: 'pending',
@@ -346,6 +347,7 @@ export class TaskService {
       status: 'draft',
       orchestration: mode,
       isolation: input.isolation,
+      executionMode: taskExecutionMode,
       repositoryIds,
       subtasks,
       progress: 0,
@@ -650,6 +652,7 @@ export class TaskService {
         title: (task.subtasks.length > 1 ? `${prefix} · ${sub.title}` : prefix).slice(0, 200),
         prompt: await this.buildPrompt(task, sub, worktree),
         model: sub.assignment.model,
+        executionMode: sub.assignment.executionMode,
       },
       /* The subtask id is always persisted on the session so crash recovery can match it, worktree or not. */
       {

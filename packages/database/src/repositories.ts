@@ -60,6 +60,7 @@ export class WorkspaceRepo {
       description: ws.description,
       type: ws.type,
       defaultProvider: ws.defaultProvider,
+      defaultExecutionMode: ws.defaultExecutionMode,
       createdAt: ws.createdAt,
       updatedAt: ws.updatedAt,
     });
@@ -117,6 +118,7 @@ export class TaskRepo {
       status: t.status,
       orchestration: t.orchestration,
       isolation: t.isolation,
+      executionMode: t.executionMode,
       repositoryIds: json(t.repositoryIds),
       subtasks: json(t.subtasks),
       progress: Math.round(t.progress),

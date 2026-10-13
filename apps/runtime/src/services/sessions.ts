@@ -240,6 +240,7 @@ export class SessionService {
       providerSessionId: null,
       cwd,
       model: input.model,
+      executionMode: input.executionMode ?? ws.defaultExecutionMode,
       error: null,
       createdAt: now,
       updatedAt: now,
@@ -326,6 +327,7 @@ export class SessionService {
       role: session.role,
       roleInstructions: roleInstructions(session.role),
       model: session.model,
+      executionMode: session.executionMode,
       resumeProviderSessionId: session.providerSessionId,
       onEvent,
       onPermissionRequest: async (req) => {

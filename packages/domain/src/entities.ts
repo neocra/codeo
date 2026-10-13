@@ -51,6 +51,19 @@ export const RepositorySchema = z.object({
 });
 export type Repository = z.infer<typeof RepositorySchema>;
 
+/**
+ * How autonomously an agent runs. Codeo orchestrates each provider's NATIVE
+ * capabilities — it never replaces them with a custom permission engine:
+ *  - `manual`: every sensitive action needs a human decision (Claude `permissionMode:'default'`
+ *    routed through Codeo approvals; Codex `sandboxMode:'read-only'`).
+ *  - `auto`: edits inside the workspace are automatic, sensitive actions still escalate where the
+ *    provider supports it (Claude `permissionMode:'acceptEdits'`; Codex `sandboxMode:'workspace-write'`).
+ *  - `full`: explicit opt-in unattended execution (Claude `permissionMode:'bypassPermissions'`;
+ *    Codex `sandboxMode:'danger-full-access'`).
+ */
+export const ExecutionModeSchema = z.enum(['manual', 'auto', 'full']);
+export type ExecutionMode = z.infer<typeof ExecutionModeSchema>;
+
 export const WorkspaceSchema = z.object({
   id: IdSchema,
   machineId: IdSchema,
@@ -59,6 +72,7 @@ export const WorkspaceSchema = z.object({
   type: WorkspaceTypeSchema,
   repositories: z.array(RepositorySchema).default([]),
   defaultProvider: z.enum(['claude-code', 'codex']).default('claude-code'),
+  defaultExecutionMode: ExecutionModeSchema.default('auto'),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
 });
@@ -107,6 +121,7 @@ export const AgentAssignmentSchema = z.object({
   role: AgentRoleSchema,
   provider: AgentProviderIdSchema,
   model: z.string().nullable().default(null),
+  executionMode: ExecutionModeSchema.default('auto'),
 });
 export type AgentAssignment = z.infer<typeof AgentAssignmentSchema>;
 
@@ -165,6 +180,8 @@ export const TaskSchema = z.object({
   orchestration: OrchestrationModeSchema.default('single'),
   /** Serialized tasks without the field predate worktree isolation (migration 0001 marks them 'none'); new tasks are persisted explicitly. */
   isolation: TaskIsolationSchema.default('none'),
+  /** Default execution mode applied to subtasks that don't override it; `auto` for tasks predating unified auto mode. */
+  executionMode: ExecutionModeSchema.default('auto'),
   repositoryIds: z.array(IdSchema).default([]),
   subtasks: z.array(SubtaskSchema).default([]),
   progress: z.number().min(0).max(100).default(0),
@@ -223,6 +240,8 @@ export const AgentSessionSchema = z.object({
   providerSessionId: z.string().nullable().default(null),
   cwd: z.string(),
   model: z.string().nullable().default(null),
+  /** Sessions serialized before unified auto mode default to `auto` (migration 0002 backfills them). */
+  executionMode: ExecutionModeSchema.default('auto'),
   error: z.string().nullable().default(null),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,

@@ -57,6 +57,7 @@ export class WorkspaceService {
       type: input.type,
       repositories,
       defaultProvider: 'claude-code',
+      defaultExecutionMode: input.defaultExecutionMode ?? 'auto',
       createdAt: now,
       updatedAt: now,
     };
