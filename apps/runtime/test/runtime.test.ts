@@ -140,12 +140,13 @@ describe('runtime end-to-end over the protocol', () => {
     await waitFor(async () => (await client.request('sessions.get', { sessionId: session.id })).session.status === 'idle');
     const { session: after, entries } = await client.request('sessions.get', { sessionId: session.id });
     expect(after.providerSessionId).toBe('prov-1');
-    expect(entries.map((e) => e.kind)).toEqual(['user_message', 'assistant_text', 'result']);
-    expect((entries[1] as { text: string }).text).toBe('Je commence.');
+    /* The session opens with a `system` entry announcing its execution mode, then the turn transcript. */
+    expect(entries.map((e) => e.kind)).toEqual(['system', 'user_message', 'assistant_text', 'result']);
+    expect((entries[2] as { text: string }).text).toBe('Je commence.');
     const t = await client.request('tasks.get', { taskId: task.id });
     expect(t.status).toBe('review');
     /* reopen: history is served from persistence, incremental fetch works */
-    expect(await client.request('sessions.get', { sessionId: session.id, afterSeq: 2 })).toMatchObject({ entries: [{ kind: 'result' }] });
+    expect(await client.request('sessions.get', { sessionId: session.id, afterSeq: 3 })).toMatchObject({ entries: [{ kind: 'result' }] });
   });
 
   it('routes a permission request through an approval that a human decides', async () => {
@@ -174,6 +175,16 @@ describe('runtime end-to-end over the protocol', () => {
     const cancelled = await client.request('sessions.cancel', { sessionId: session.id });
     expect(cancelled.status).toBe('cancelled');
     await expect(runtime.call('workspaces.delete', { workspaceId: ws!.id }, { scopes: ['read'], clientKind: 'mobile' })).rejects.toThrow(/Portée/);
+  });
+
+  it('threads the execution mode from the workspace default onto a session and honours an override', async () => {
+    const [ws] = await client.request('workspaces.list', {});
+    const inherited = await client.request('sessions.start', { workspaceId: ws!.id, provider: 'claude-code', prompt: 'hello' });
+    const d1 = await client.request('sessions.get', { sessionId: inherited.id });
+    expect(d1.session.executionMode).toBe(ws!.defaultExecutionMode);
+    const overridden = await client.request('sessions.start', { workspaceId: ws!.id, provider: 'claude-code', executionMode: 'manual', prompt: 'hello' });
+    const d2 = await client.request('sessions.get', { sessionId: overridden.id });
+    expect(d2.session.executionMode).toBe('manual');
   });
 
   it('replays missed events on reconnect', async () => {
