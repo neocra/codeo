@@ -1,4 +1,4 @@
-import type { ExecutionMode } from '@codeo/domain';
+import type { AgentProviderId, ExecutionMode } from '@codeo/domain';
 
 /**
  * Native settings each provider adapter applies for a given execution mode.
@@ -46,3 +46,17 @@ export function codexSandboxMode(mode: ExecutionMode): CodexSandboxMode {
       return 'danger-full-access';
   }
 }
+
+/** Every execution mode, in increasing autonomy — the UI iterates this order. */
+export const EXECUTION_MODES: readonly ExecutionMode[] = ['manual', 'auto', 'full'] as const;
+
+/**
+ * Whether a provider can escalate individual sensitive actions to a human *within* a mode.
+ * Claude Code routes sensitive tools through `canUseTool` (Codeo approvals). Codex runs
+ * non-interactively (`codex exec`): its sandbox is the whole policy, so there is no
+ * per-action escalation — `auto`/`manual` degrade to the sandbox boundary instead.
+ */
+export function supportsPerActionEscalation(provider: AgentProviderId): boolean {
+  return provider === 'claude-code';
+}
+

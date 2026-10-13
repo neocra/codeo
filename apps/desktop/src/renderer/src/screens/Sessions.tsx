@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import type { AgentProviderId, AgentRole } from '@codeo/domain';
+import type { AgentProviderId, AgentRole, ExecutionMode } from '@codeo/domain';
 import { Avatar, Button, Dialog, EmptyState, Field, Select, StatusPill, Tabs, Textarea } from '@codeo/ui-desktop';
 import { SessionView } from '../components/SessionView';
 import { providerName, sessionTone } from '../components/status';
@@ -10,6 +10,7 @@ import { useProviders, useSessions, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
 
 const ROLES: AgentRole[] = ['developer', 'planner', 'architect', 'backend', 'frontend', 'qa', 'reviewer', 'devops'];
+const EXECUTION_MODES: ExecutionMode[] = ['manual', 'auto', 'full'];
 
 function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
@@ -21,10 +22,11 @@ function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [prompt, setPrompt] = useState('');
   const [provider, setProvider] = useState<AgentProviderId>('claude-code');
   const [role, setRole] = useState<AgentRole>('developer');
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('auto');
   const [repositoryId, setRepositoryId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const start = useMutation({
-    mutationFn: () => invoke('sessions.start', { workspaceId: ws!.id, repositoryId: repositoryId || ws!.repositories[0]?.id || null, provider, role, prompt: prompt.trim() }),
+    mutationFn: () => invoke('sessions.start', { workspaceId: ws!.id, repositoryId: repositoryId || ws!.repositories[0]?.id || null, provider, role, executionMode, prompt: prompt.trim() }),
     onSuccess: (s) => {
       void qc.invalidateQueries({ queryKey: ['sessions'] });
       setPrompt('');
@@ -63,6 +65,15 @@ function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => voi
             </Select>
           </Field>
         </div>
+        <Field label={t('tasks.create.executionMode')} htmlFor="ns-execution-mode" hint={t(`executionMode.${executionMode}.desc`)}>
+          <Select id="ns-execution-mode" value={executionMode} onChange={(e) => setExecutionMode(e.target.value as ExecutionMode)}>
+            {EXECUTION_MODES.map((m) => (
+              <option key={m} value={m}>
+                {t(`executionMode.${m}`)}
+              </option>
+            ))}
+          </Select>
+        </Field>
         {ws && ws.repositories.length > 1 ? (
           <Field label={t('sessions.new.repository')} htmlFor="ns-repo">
             <Select id="ns-repo" value={repositoryId} onChange={(e) => setRepositoryId(e.target.value)}>

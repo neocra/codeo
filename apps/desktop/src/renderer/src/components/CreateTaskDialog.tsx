@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { SubtaskPlan } from '@codeo/contracts';
-import type { AgentProviderId, AgentRole, OrchestrationMode } from '@codeo/domain';
+import type { AgentProviderId, AgentRole, ExecutionMode, OrchestrationMode } from '@codeo/domain';
 import { Button, Card, Choice, Dialog, Field, Input, Placeholder, Select, Textarea } from '@codeo/ui-desktop';
 import type { MessageKey } from '@codeo/i18n';
 import { invoke, describeError } from '../lib/api';
@@ -11,6 +11,7 @@ import { useUi } from '../lib/store';
 
 const ROLES: AgentRole[] = ['developer', 'planner', 'architect', 'backend', 'frontend', 'qa', 'reviewer', 'devops'];
 const MODES: OrchestrationMode[] = ['single', 'sequential', 'pipeline', 'parallel', 'best-of-n'];
+const EXECUTION_MODES: ExecutionMode[] = ['manual', 'auto', 'full'];
 const MAX_AGENTS = 8;
 
 interface AgentDraft {
@@ -19,6 +20,7 @@ interface AgentDraft {
   instructions: string;
   provider: AgentProviderId;
   role: AgentRole;
+  executionMode: ExecutionMode;
   repositoryId: string;
   /** Indexes of earlier agents (parallel mode only). */
   dependsOn: number[];
@@ -28,7 +30,7 @@ const agentLabelKey = (mode: OrchestrationMode): MessageKey =>
   mode === 'best-of-n' ? 'tasks.create.candidate' : mode === 'parallel' ? 'tasks.create.subtask' : 'tasks.create.step';
 
 let nextKey = 1;
-const draft = (provider: AgentProviderId, role: AgentRole = 'developer'): AgentDraft => ({ key: nextKey++, title: '', instructions: '', provider, role, repositoryId: '', dependsOn: [] });
+const draft = (provider: AgentProviderId, role: AgentRole = 'developer', executionMode: ExecutionMode = 'auto'): AgentDraft => ({ key: nextKey++, title: '', instructions: '', provider, role, executionMode, repositoryId: '', dependsOn: [] });
 
 export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
@@ -43,6 +45,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
   const [ticketKey, setTicketKey] = useState('');
   const [provider, setProvider] = useState<AgentProviderId>('claude-code');
   const [role, setRole] = useState<AgentRole>('developer');
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('auto');
   const [repos, setRepos] = useState<string[]>([]);
   const [mode, setMode] = useState<OrchestrationMode>('single');
   const [isolated, setIsolated] = useState(true);
@@ -59,9 +62,9 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
     if (m === 'single') return;
     /* Seed a sensible plan the first time; keep the user's edits afterwards. */
     setAgents((cur) => {
-      const base = cur.length ? cur : m === 'sequential' || m === 'pipeline' ? [draft(provider, 'planner'), draft(provider, role)] : [draft(provider, role), draft(provider, role)];
+      const base = cur.length ? cur : m === 'sequential' || m === 'pipeline' ? [draft(provider, 'planner', executionMode), draft(provider, role, executionMode)] : [draft(provider, role, executionMode), draft(provider, role, executionMode)];
       const min = m === 'best-of-n' ? 2 : 1;
-      const padded = base.length >= min ? base : [...base, ...Array.from({ length: min - base.length }, () => draft(provider, role))];
+      const padded = base.length >= min ? base : [...base, ...Array.from({ length: min - base.length }, () => draft(provider, role, executionMode))];
       return m === 'parallel' ? padded : padded.map((a) => ({ ...a, dependsOn: [] }));
     });
   };
@@ -81,6 +84,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
               provider: a.provider,
               role: a.role,
               model: null,
+              executionMode: a.executionMode,
               repositoryId: a.repositoryId || null,
               dependsOn: mode === 'parallel' ? a.dependsOn : [],
             }));
@@ -92,6 +96,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
         repositoryIds: repos,
         provider,
         role,
+        executionMode,
         orchestration: mode,
         isolation: isolated ? 'worktree' : 'none',
         subtasks,
@@ -116,6 +121,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
     setTicketKey('');
     setRepos([]);
     setMode('single');
+    setExecutionMode('auto');
     setIsolated(true);
     setAgents([]);
     setError(null);
@@ -168,6 +174,9 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
             ))}
           </Select>
         </Field>
+        <Field label={t('tasks.create.executionMode')} htmlFor="task-execution-mode" hint={t(`executionMode.${executionMode}.desc`)}>
+          <ExecutionModeSelect id="task-execution-mode" value={executionMode} onChange={setExecutionMode} />
+        </Field>
         <Field label={t('tasks.create.isolation')} hint={parallelMode ? t('tasks.create.isolation.required') : t('tasks.create.isolation.hint')}>
           <Choice type="checkbox" checked={isolated} disabled={parallelMode} onChange={() => !parallelMode && setIsolated((v) => !v)} label={isolated ? t('tasks.isolation.worktree') : t('tasks.isolation.none')} />
         </Field>
@@ -195,6 +204,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
                     <ProviderSelect aria-label={t('tasks.create.agent')} value={a.provider} onChange={(v) => patchAgent(i, { provider: v })} />
                     <RoleSelect aria-label={t('tasks.create.role')} value={a.role} onChange={(v) => patchAgent(i, { role: v })} />
                   </div>
+                  <ExecutionModeSelect aria-label={t('tasks.create.executionMode')} value={a.executionMode} onChange={(v) => patchAgent(i, { executionMode: v })} />
                   {mode !== 'best-of-n' ? (
                     <>
                       <Input aria-label={t('tasks.create.stepTitle')} placeholder={t('tasks.create.stepTitle')} value={a.title} maxLength={200} onChange={(e) => patchAgent(i, { title: e.target.value })} />
@@ -274,6 +284,19 @@ function RoleSelect({ value, onChange, ...rest }: { value: AgentRole; onChange: 
       {ROLES.map((r) => (
         <option key={r} value={r}>
           {t(`role.${r}`)}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+function ExecutionModeSelect({ value, onChange, ...rest }: { value: ExecutionMode; onChange: (v: ExecutionMode) => void; id?: string; 'aria-label'?: string }) {
+  const t = useT();
+  return (
+    <Select {...rest} value={value} onChange={(e) => onChange(e.target.value as ExecutionMode)}>
+      {EXECUTION_MODES.map((m) => (
+        <option key={m} value={m}>
+          {t(`executionMode.${m}`)}
         </option>
       ))}
     </Select>
