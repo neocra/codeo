@@ -19,6 +19,7 @@ describe('database', () => {
       description: '',
       type: 'multi-repo',
       defaultProvider: 'claude-code',
+      defaultExecutionMode: 'auto',
       createdAt: now,
       updatedAt: now,
       repositories: [{ id: 'repo_1', workspaceId: 'ws_1', name: 'elyndor-unity', path: '/tmp/elyndor-unity', defaultBranch: 'main', remoteUrl: null, services: [], createdAt: now }],
@@ -33,7 +34,7 @@ describe('database', () => {
     await sessions.upsert({
       id: 'ses_1', workspaceId: 'ws_1', taskId: null, subtaskId: null, repositoryId: null, worktreeId: null,
       provider: 'claude-code', role: 'developer', title: 'Test', status: 'running', providerSessionId: null,
-      cwd: '/tmp', model: null, error: null, createdAt: now, updatedAt: now, lastActivityAt: now,
+      cwd: '/tmp', model: null, executionMode: 'auto', error: null, createdAt: now, updatedAt: now, lastActivityAt: now,
     });
     await sessions.appendEntry({ kind: 'user_message', id: 'ent_1', sessionId: 'ses_1', seq: 1, at: now, text: 'Bonjour' });
     await sessions.appendEntry({ kind: 'assistant_text', id: 'ent_2', sessionId: 'ses_1', seq: 2, at: now, text: 'Salut', streaming: false });

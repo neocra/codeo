@@ -1,6 +1,7 @@
 import { query, type Options, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   classifyToolUse,
+  claudePermissionMode,
   ProviderUnavailableError,
   type AgentProvider,
   type ProviderSessionHandle,
@@ -76,11 +77,14 @@ export class ClaudeCodeProvider implements AgentProvider {
     let providerSessionId: string | null = opts.resumeProviderSessionId;
     let closed = false;
 
+    const permissionMode = this.opts.permissionMode ?? claudePermissionMode(opts.executionMode);
     const options: Options = {
       cwd: opts.cwd,
       abortController: abort,
       includePartialMessages: true,
-      permissionMode: this.opts.permissionMode ?? 'default',
+      permissionMode,
+      /* The SDK refuses `bypassPermissions` without this explicit opt-in; only `full` mode reaches it. */
+      ...(permissionMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
       settingSources: ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code', append: opts.roleInstructions },
       env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'codeo/0.1.0' },

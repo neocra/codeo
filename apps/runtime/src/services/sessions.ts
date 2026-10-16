@@ -1,5 +1,6 @@
 import {
   roleInstructions,
+  supportsPerActionEscalation,
   type ProviderEvent,
   type ProviderSessionHandle,
 } from '@codeo/agent-provider-core';
@@ -197,6 +198,21 @@ export class SessionService {
     return full;
   }
 
+  /**
+   * Records the active execution mode as a system entry so the transcript shows how autonomously
+   * the agent runs. When a provider cannot escalate individual actions (e.g. Codex), a non-`full`
+   * mode is enforced only by its sandbox: we say so explicitly instead of implying per-action control.
+   */
+  private async announceExecutionMode(session: AgentSession, live: Live): Promise<void> {
+    const mode = session.executionMode;
+    const degraded = mode !== 'full' && !supportsPerActionEscalation(session.provider);
+    const key = degraded ? 'session.executionMode.sandboxOnly' : `session.executionMode.${mode}`;
+    const text = degraded
+      ? `Mode ${mode} : ${session.provider} applique son bac à sable (aucune validation par action).`
+      : `Mode d’exécution : ${mode}.`;
+    await this.append(session, live, { kind: 'system', level: 'info', key, text, params: { mode, provider: session.provider } });
+  }
+
   private async update(session: AgentSession, entry: SessionEntry): Promise<void> {
     await this.repo.updateEntry(entry);
     this.bus.publish('SessionEntryUpdated', { sessionId: session.id, entry });
@@ -240,6 +256,7 @@ export class SessionService {
       providerSessionId: null,
       cwd,
       model: input.model,
+      executionMode: input.executionMode ?? ws.defaultExecutionMode,
       error: null,
       createdAt: now,
       updatedAt: now,
@@ -326,6 +343,7 @@ export class SessionService {
       role: session.role,
       roleInstructions: roleInstructions(session.role),
       model: session.model,
+      executionMode: session.executionMode,
       resumeProviderSessionId: session.providerSessionId,
       onEvent,
       onPermissionRequest: async (req) => {
@@ -399,6 +417,7 @@ export class SessionService {
        retry never finds a live but unrecorded agent in the worktree. */
     try {
       current = await this.setStatus(current, 'running');
+      await this.announceExecutionMode(current, live);
       await this.append(current, live, { kind: 'user_message', text: prompt });
       await live.handle.send(prompt);
       return current;

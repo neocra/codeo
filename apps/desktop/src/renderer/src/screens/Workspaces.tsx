@@ -1,7 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { RepositoryInspection } from '@codeo/contracts';
+import type { ExecutionMode } from '@codeo/domain';
 import { Button, Card, Choice, Dialog, EmptyState, Field, Icon, Input, PageHeader, RepoChip, StatusPill } from '@codeo/ui-desktop';
+import { ExecutionModeSelect } from '../components/ExecutionModeSelect';
 import { codeo, invoke, describeError } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { keys, useWorkspaces } from '../lib/queries';
@@ -14,6 +16,7 @@ function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClose: () =
   const [name, setName] = useState('');
   const [type, setType] = useState<'multi-repo' | 'monorepo'>('multi-repo');
   const [repos, setRepos] = useState<RepositoryInspection[]>([]);
+  const [defaultExecutionMode, setDefaultExecutionMode] = useState<ExecutionMode>('auto');
   const [error, setError] = useState<string | null>(null);
 
   const pick = async () => {
@@ -29,13 +32,14 @@ function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClose: () =
     if (!name) setName(info.name);
   };
   const create = useMutation({
-    mutationFn: () => invoke('workspaces.create', { name, type, repositoryPaths: repos.map((r) => r.root!) }),
+    mutationFn: () => invoke('workspaces.create', { name, type, repositoryPaths: repos.map((r) => r.root!), defaultExecutionMode }),
     onSuccess: (ws) => {
       void qc.invalidateQueries({ queryKey: keys.workspaces });
       setWorkspace(ws.id);
       void codeo.setPreference('workspaceId', ws.id);
       setRepos([]);
       setName('');
+      setDefaultExecutionMode('auto');
       onClose();
     },
     onError: (e) => setError(describeError(e, t)),
@@ -58,6 +62,9 @@ function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClose: () =
             <Choice checked={type === 'multi-repo'} onChange={() => setType('multi-repo')} label={t('workspaces.type.multiRepo')} name="ws-type" />
             <Choice checked={type === 'monorepo'} onChange={() => setType('monorepo')} label={t('workspaces.type.monorepo')} name="ws-type" />
           </div>
+        </Field>
+        <Field label={t('workspaces.defaultExecutionMode')} htmlFor="ws-execution-mode" hint={`${t(`executionMode.${defaultExecutionMode}.desc`)} ${t('workspaces.defaultExecutionMode.hint')}`}>
+          <ExecutionModeSelect id="ws-execution-mode" value={defaultExecutionMode} onChange={setDefaultExecutionMode} />
         </Field>
         <Field label={t('workspaces.repositories')} hint={t('workspaces.repositories.hint')} error={error}>
           <div className="cd-stack cd-stack--sm">
@@ -107,6 +114,10 @@ export function WorkspacesScreen() {
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.workspaces }),
   });
+  const updateWorkspace = useMutation({
+    mutationFn: (p: { workspaceId: string; defaultExecutionMode: ExecutionMode }) => invoke('workspaces.update', p),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.workspaces }),
+  });
   const removeRepo = useMutation({
     mutationFn: (p: { workspaceId: string; repositoryId: string }) => invoke('workspaces.removeRepository', p),
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.workspaces }),
@@ -131,6 +142,9 @@ export function WorkspacesScreen() {
                 <span className="cd-body-sm cd-muted">{t(ws.type === 'monorepo' ? 'workspaces.type.monorepo' : 'workspaces.type.multiRepo')}</span>
               </div>
               <div className="cd-stack cd-stack--sm">
+                <Field label={t('workspaces.defaultExecutionMode')} htmlFor={`ws-mode-${ws.id}`} hint={t('workspaces.defaultExecutionMode.hint')}>
+                  <ExecutionModeSelect id={`ws-mode-${ws.id}`} value={ws.defaultExecutionMode} disabled={updateWorkspace.isPending} onChange={(m) => updateWorkspace.mutate({ workspaceId: ws.id, defaultExecutionMode: m })} />
+                </Field>
                 {ws.repositories.map((r) => (
                   <div key={r.id} className="cd-row-gap" style={{ justifyContent: 'space-between' }}>
                     <span className="cd-row-gap">

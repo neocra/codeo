@@ -15,6 +15,7 @@ export const workspaces = sqliteTable('workspaces', {
   description: text('description').notNull().default(''),
   type: text('type').notNull(),
   defaultProvider: text('default_provider').notNull().default('claude-code'),
+  defaultExecutionMode: text('default_execution_mode').notNull().default('auto'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
@@ -47,6 +48,7 @@ export const tasks = sqliteTable(
     status: text('status').notNull(),
     orchestration: text('orchestration').notNull().default('single'),
     isolation: text('isolation').notNull().default('worktree'),
+    executionMode: text('execution_mode').notNull().default('auto'),
     /** JSON array of repository ids */
     repositoryIds: text('repository_ids').notNull().default('[]'),
     /** JSON array of Subtask */
@@ -76,6 +78,7 @@ export const agentSessions = sqliteTable(
     providerSessionId: text('provider_session_id'),
     cwd: text('cwd').notNull(),
     model: text('model'),
+    executionMode: text('execution_mode').notNull().default('auto'),
     error: text('error'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),

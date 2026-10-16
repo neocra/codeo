@@ -141,7 +141,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <div className="cd-session__title">{session.title}</div>
           <div className="cd-body-sm cd-muted">
-            {author} · {t(`role.${session.role}`)} · <span className="cd-key">{session.cwd.split('/').pop()}</span> · {formatRelative(t, session.lastActivityAt)}
+            {author} · {t(`role.${session.role}`)} · {t(`executionMode.${session.executionMode}`)} · <span className="cd-key">{session.cwd.split('/').pop()}</span> · {formatRelative(t, session.lastActivityAt)}
           </div>
         </div>
         <StatusPill key={tone} tone={tone}>
