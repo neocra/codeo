@@ -187,6 +187,15 @@ describe('runtime end-to-end over the protocol', () => {
     expect(d2.session.executionMode).toBe('manual');
   });
 
+  it('changes the workspace default execution mode, which new sessions then inherit', async () => {
+    const [ws] = await client.request('workspaces.list', {});
+    const updated = await client.request('workspaces.update', { workspaceId: ws!.id, defaultExecutionMode: 'full' });
+    expect(updated.defaultExecutionMode).toBe('full');
+    const session = await client.request('sessions.start', { workspaceId: ws!.id, provider: 'claude-code', prompt: 'hello' });
+    expect((await client.request('sessions.get', { sessionId: session.id })).session.executionMode).toBe('full');
+    await client.request('workspaces.update', { workspaceId: ws!.id, defaultExecutionMode: 'auto' });
+  });
+
   it('replays missed events on reconnect', async () => {
     const late = new RuntimeClient({ url: `ws://127.0.0.1:${server.port}`, token: TOKEN, client: { name: 'late', version: '0', kind: 'test' }, createWebSocket: (u) => new WebSocket(u) as never, reconnect: false, replayFromStart: true });
     const seen: number[] = [];

@@ -115,6 +115,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'repositories.inspect': async ({ path: p }) => inspectRepository(p),
     'workspaces.list': async () => workspaces.list(),
     'workspaces.create': async (p) => workspaces.create(p),
+    'workspaces.update': async (p) => workspaces.update(p.workspaceId, { defaultExecutionMode: p.defaultExecutionMode }),
     'workspaces.addRepository': async (p) => workspaces.addRepository(p.workspaceId, p.path),
     'workspaces.removeRepository': async (p) =>
       workspaceLocks.run(p.workspaceId, async () => {

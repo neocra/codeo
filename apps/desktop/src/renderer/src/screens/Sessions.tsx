@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { AgentProviderId, AgentRole, ExecutionMode } from '@codeo/domain';
 import { Avatar, Button, Dialog, EmptyState, Field, Select, StatusPill, Tabs, Textarea } from '@codeo/ui-desktop';
+import { ExecutionModeSelect } from '../components/ExecutionModeSelect';
 import { SessionView } from '../components/SessionView';
 import { providerName, sessionTone } from '../components/status';
 import { invoke, describeError } from '../lib/api';
@@ -10,7 +11,6 @@ import { useProviders, useSessions, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
 
 const ROLES: AgentRole[] = ['developer', 'planner', 'architect', 'backend', 'frontend', 'qa', 'reviewer', 'devops'];
-const EXECUTION_MODES: ExecutionMode[] = ['manual', 'auto', 'full'];
 
 function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
@@ -22,14 +22,17 @@ function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [prompt, setPrompt] = useState('');
   const [provider, setProvider] = useState<AgentProviderId>('claude-code');
   const [role, setRole] = useState<AgentRole>('developer');
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>('auto');
+  /* null = follow the workspace default (the runtime applies it); set once the user picks a mode explicitly. */
+  const [executionModeOverride, setExecutionMode] = useState<ExecutionMode | null>(null);
+  const executionMode = executionModeOverride ?? ws?.defaultExecutionMode ?? 'auto';
   const [repositoryId, setRepositoryId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const start = useMutation({
-    mutationFn: () => invoke('sessions.start', { workspaceId: ws!.id, repositoryId: repositoryId || ws!.repositories[0]?.id || null, provider, role, executionMode, prompt: prompt.trim() }),
+    mutationFn: () => invoke('sessions.start', { workspaceId: ws!.id, repositoryId: repositoryId || ws!.repositories[0]?.id || null, provider, role, ...(executionModeOverride ? { executionMode: executionModeOverride } : {}), prompt: prompt.trim() }),
     onSuccess: (s) => {
       void qc.invalidateQueries({ queryKey: ['sessions'] });
       setPrompt('');
+      setExecutionMode(null);
       onClose();
       openSession(s.id);
     },
@@ -66,13 +69,7 @@ function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => voi
           </Field>
         </div>
         <Field label={t('tasks.create.executionMode')} htmlFor="ns-execution-mode" hint={t(`executionMode.${executionMode}.desc`)}>
-          <Select id="ns-execution-mode" value={executionMode} onChange={(e) => setExecutionMode(e.target.value as ExecutionMode)}>
-            {EXECUTION_MODES.map((m) => (
-              <option key={m} value={m}>
-                {t(`executionMode.${m}`)}
-              </option>
-            ))}
-          </Select>
+          <ExecutionModeSelect id="ns-execution-mode" value={executionMode} onChange={setExecutionMode} />
         </Field>
         {ws && ws.repositories.length > 1 ? (
           <Field label={t('sessions.new.repository')} htmlFor="ns-repo">

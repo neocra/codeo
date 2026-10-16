@@ -116,6 +116,11 @@ export const commands = {
     WorkspaceSchema,
     'workspace:admin',
   ),
+  'workspaces.update': define(
+    z.object({ workspaceId: IdSchema, defaultExecutionMode: ExecutionModeSchema }),
+    WorkspaceSchema,
+    'workspace:admin',
+  ),
   'workspaces.addRepository': define(
     z.object({ workspaceId: IdSchema, path: z.string().min(1) }),
     WorkspaceSchema,

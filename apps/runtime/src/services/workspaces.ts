@@ -1,6 +1,6 @@
 import { localizedError, RuntimeError, type CommandParsedParams } from '@codeo/contracts';
 import type { WorkspaceRepo } from '@codeo/database';
-import type { Repository, Workspace } from '@codeo/domain';
+import type { ExecutionMode, Repository, Workspace } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
 import { newId } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
@@ -64,6 +64,15 @@ export class WorkspaceService {
     await this.repo.insert(ws);
     this.bus.publish('WorkspaceCreated', { workspace: ws });
     return ws;
+  }
+
+  /** Changes workspace-level settings; only affects sessions and tasks created afterwards. */
+  async update(workspaceId: string, patch: { defaultExecutionMode: ExecutionMode }): Promise<Workspace> {
+    await this.get(workspaceId);
+    await this.repo.update(workspaceId, { defaultExecutionMode: patch.defaultExecutionMode, updatedAt: new Date().toISOString() });
+    const updated = await this.get(workspaceId);
+    this.bus.publish('WorkspaceUpdated', { workspace: updated });
+    return updated;
   }
 
   async addRepository(workspaceId: string, dir: string): Promise<Workspace> {

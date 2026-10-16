@@ -8,10 +8,10 @@ import { invoke, describeError } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { useProviders, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
+import { ExecutionModeSelect } from './ExecutionModeSelect';
 
 const ROLES: AgentRole[] = ['developer', 'planner', 'architect', 'backend', 'frontend', 'qa', 'reviewer', 'devops'];
 const MODES: OrchestrationMode[] = ['single', 'sequential', 'pipeline', 'parallel', 'best-of-n'];
-const EXECUTION_MODES: ExecutionMode[] = ['manual', 'auto', 'full'];
 const MAX_AGENTS = 8;
 
 interface AgentDraft {
@@ -30,7 +30,7 @@ const agentLabelKey = (mode: OrchestrationMode): MessageKey =>
   mode === 'best-of-n' ? 'tasks.create.candidate' : mode === 'parallel' ? 'tasks.create.subtask' : 'tasks.create.step';
 
 let nextKey = 1;
-const draft = (provider: AgentProviderId, role: AgentRole = 'developer', executionMode: ExecutionMode = 'auto'): AgentDraft => ({ key: nextKey++, title: '', instructions: '', provider, role, executionMode, repositoryId: '', dependsOn: [] });
+const draft = (provider: AgentProviderId, role: AgentRole, executionMode: ExecutionMode): AgentDraft => ({ key: nextKey++, title: '', instructions: '', provider, role, executionMode, repositoryId: '', dependsOn: [] });
 
 export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
@@ -45,7 +45,9 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
   const [ticketKey, setTicketKey] = useState('');
   const [provider, setProvider] = useState<AgentProviderId>('claude-code');
   const [role, setRole] = useState<AgentRole>('developer');
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>('auto');
+  /* null = follow the workspace default; set once the user picks a mode explicitly. */
+  const [executionModeOverride, setExecutionMode] = useState<ExecutionMode | null>(null);
+  const executionMode = executionModeOverride ?? ws?.defaultExecutionMode ?? 'auto';
   const [repos, setRepos] = useState<string[]>([]);
   const [mode, setMode] = useState<OrchestrationMode>('single');
   const [isolated, setIsolated] = useState(true);
@@ -96,7 +98,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
         repositoryIds: repos,
         provider,
         role,
-        executionMode,
+        ...(executionModeOverride ? { executionMode: executionModeOverride } : {}),
         orchestration: mode,
         isolation: isolated ? 'worktree' : 'none',
         subtasks,
@@ -121,7 +123,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
     setTicketKey('');
     setRepos([]);
     setMode('single');
-    setExecutionMode('auto');
+    setExecutionMode(null);
     setIsolated(true);
     setAgents([]);
     setError(null);
@@ -238,7 +240,7 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
                 </Card>
               ))}
               <div>
-                <Button variant="secondary" size="sm" icon="plus" disabled={agents.length >= MAX_AGENTS} onClick={() => setAgents((cur) => [...cur, draft(provider, role)])}>
+                <Button variant="secondary" size="sm" icon="plus" disabled={agents.length >= MAX_AGENTS} onClick={() => setAgents((cur) => [...cur, draft(provider, role, executionMode)])}>
                   {t('tasks.create.addAgent')}
                 </Button>
               </div>
@@ -284,19 +286,6 @@ function RoleSelect({ value, onChange, ...rest }: { value: AgentRole; onChange: 
       {ROLES.map((r) => (
         <option key={r} value={r}>
           {t(`role.${r}`)}
-        </option>
-      ))}
-    </Select>
-  );
-}
-
-function ExecutionModeSelect({ value, onChange, ...rest }: { value: ExecutionMode; onChange: (v: ExecutionMode) => void; id?: string; 'aria-label'?: string }) {
-  const t = useT();
-  return (
-    <Select {...rest} value={value} onChange={(e) => onChange(e.target.value as ExecutionMode)}>
-      {EXECUTION_MODES.map((m) => (
-        <option key={m} value={m}>
-          {t(`executionMode.${m}`)}
         </option>
       ))}
     </Select>

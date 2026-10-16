@@ -64,6 +64,22 @@ export type Repository = z.infer<typeof RepositorySchema>;
 export const ExecutionModeSchema = z.enum(['manual', 'auto', 'full']);
 export type ExecutionMode = z.infer<typeof ExecutionModeSchema>;
 
+/**
+ * The mode a provider effectively ran under before execution modes existed: Claude Code used
+ * `permissionMode:'default'` (= `manual`), Codex `sandboxMode:'workspace-write'` (= `auto`).
+ * Records serialized without the field keep that policy instead of silently changing it.
+ */
+export function legacyExecutionMode(provider: string): ExecutionMode {
+  return provider === 'claude-code' ? 'manual' : 'auto';
+}
+
+/** Fills a missing `executionMode` from the record's `provider` (see `legacyExecutionMode`). */
+const withLegacyExecutionMode = (value: unknown): unknown => {
+  if (typeof value !== 'object' || value === null || 'executionMode' in value) return value;
+  const provider = (value as { provider?: unknown }).provider;
+  return typeof provider === 'string' ? { ...value, executionMode: legacyExecutionMode(provider) } : value;
+};
+
 export const WorkspaceSchema = z.object({
   id: IdSchema,
   machineId: IdSchema,
@@ -117,12 +133,16 @@ export const AgentRoleSchema = z.enum([
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
-export const AgentAssignmentSchema = z.object({
-  role: AgentRoleSchema,
-  provider: AgentProviderIdSchema,
-  model: z.string().nullable().default(null),
-  executionMode: ExecutionModeSchema.default('auto'),
-});
+/** Assignments serialized before unified auto mode (in `tasks.subtasks`) keep their provider's former policy. */
+export const AgentAssignmentSchema = z.preprocess(
+  withLegacyExecutionMode,
+  z.object({
+    role: AgentRoleSchema,
+    provider: AgentProviderIdSchema,
+    model: z.string().nullable().default(null),
+    executionMode: ExecutionModeSchema,
+  }),
+);
 export type AgentAssignment = z.infer<typeof AgentAssignmentSchema>;
 
 /* ------------------------------------------------------------------ */
@@ -180,7 +200,10 @@ export const TaskSchema = z.object({
   orchestration: OrchestrationModeSchema.default('single'),
   /** Serialized tasks without the field predate worktree isolation (migration 0001 marks them 'none'); new tasks are persisted explicitly. */
   isolation: TaskIsolationSchema.default('none'),
-  /** Default execution mode applied to subtasks that don't override it; `auto` for tasks predating unified auto mode. */
+  /**
+   * Default execution mode for subtasks that don't override it — only read when the task is created.
+   * What actually runs is each subtask's `assignment.executionMode` (legacy assignments keep their former policy).
+   */
   executionMode: ExecutionModeSchema.default('auto'),
   repositoryIds: z.array(IdSchema).default([]),
   subtasks: z.array(SubtaskSchema).default([]),
@@ -225,7 +248,7 @@ export const SessionStatusSchema = z.enum([
 ]);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
-export const AgentSessionSchema = z.object({
+export const AgentSessionSchema = z.preprocess(withLegacyExecutionMode, z.object({
   id: IdSchema,
   workspaceId: IdSchema,
   taskId: IdSchema.nullable().default(null),
@@ -240,13 +263,13 @@ export const AgentSessionSchema = z.object({
   providerSessionId: z.string().nullable().default(null),
   cwd: z.string(),
   model: z.string().nullable().default(null),
-  /** Sessions serialized before unified auto mode default to `auto` (migration 0002 backfills them). */
-  executionMode: ExecutionModeSchema.default('auto'),
+  /** Sessions serialized before unified auto mode keep their provider's former policy (migration 0002 backfills rows). */
+  executionMode: ExecutionModeSchema,
   error: z.string().nullable().default(null),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
   lastActivityAt: IsoDateSchema,
-});
+}));
 export type AgentSession = z.infer<typeof AgentSessionSchema>;
 
 /** Normalised transcript entries — independent of provider wire formats. */

@@ -67,6 +67,10 @@ export class WorkspaceRepo {
     for (const r of ws.repositories) await this.insertRepository(r);
   }
 
+  async update(id: string, patch: { defaultExecutionMode: Workspace['defaultExecutionMode']; updatedAt: string }): Promise<void> {
+    await this.db.update(s.workspaces).set(patch).where(eq(s.workspaces.id, id));
+  }
+
   async insertRepository(r: Repository): Promise<void> {
     await this.db.insert(s.repositories).values({
       id: r.id,
