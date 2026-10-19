@@ -1,4 +1,4 @@
-import type { AgentProviderId, AgentRole, ProviderStatus, RiskLevel } from '@codeo/domain';
+import type { AgentProviderId, AgentRole, ExecutionMode, ProviderStatus, RiskLevel } from '@codeo/domain';
 import type { Logger } from '@codeo/shared-utils';
 
 /** Normalised events every adapter emits — never a provider wire format. */
@@ -39,6 +39,8 @@ export interface StartSessionOptions {
   role: AgentRole;
   roleInstructions: string;
   model: string | null;
+  /** How autonomously this session runs; the adapter maps it to its provider's native policy. */
+  executionMode: ExecutionMode;
   /** Provider session/thread id to resume; null starts fresh. */
   resumeProviderSessionId: string | null;
   onEvent: (event: ProviderEvent) => void;

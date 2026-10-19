@@ -60,10 +60,15 @@ export class WorkspaceRepo {
       description: ws.description,
       type: ws.type,
       defaultProvider: ws.defaultProvider,
+      defaultExecutionMode: ws.defaultExecutionMode,
       createdAt: ws.createdAt,
       updatedAt: ws.updatedAt,
     });
     for (const r of ws.repositories) await this.insertRepository(r);
+  }
+
+  async update(id: string, patch: { defaultExecutionMode: Workspace['defaultExecutionMode']; updatedAt: string }): Promise<void> {
+    await this.db.update(s.workspaces).set(patch).where(eq(s.workspaces.id, id));
   }
 
   async insertRepository(r: Repository): Promise<void> {
@@ -117,6 +122,7 @@ export class TaskRepo {
       status: t.status,
       orchestration: t.orchestration,
       isolation: t.isolation,
+      executionMode: t.executionMode,
       repositoryIds: json(t.repositoryIds),
       subtasks: json(t.subtasks),
       progress: Math.round(t.progress),

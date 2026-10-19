@@ -8,7 +8,7 @@ const sub = (id: string, order: number, status: SubtaskStatus = 'pending', depen
   taskId: 'task_1',
   title: id,
   instructions: '',
-  assignment: { role: 'developer', provider: 'claude-code', model: null },
+  assignment: { role: 'developer', provider: 'claude-code', model: null, executionMode: 'auto' },
   repositoryId: null,
   dependsOn,
   status,

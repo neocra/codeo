@@ -1,5 +1,5 @@
 import { Codex, type Thread, type ThreadOptions } from '@openai/codex-sdk';
-import { ProviderUnavailableError, type AgentProvider, type ProviderSessionHandle, type StartSessionOptions } from '@codeo/agent-provider-core';
+import { codexSandboxMode, ProviderUnavailableError, type AgentProvider, type ProviderSessionHandle, type StartSessionOptions } from '@codeo/agent-provider-core';
 import type { ProviderStatus } from '@codeo/domain';
 import { detectCodex, resolveCodexExecutable } from './detect';
 import { translateThreadEvent } from './translate';
@@ -32,7 +32,7 @@ export class CodexProvider implements AgentProvider {
     const codex = new Codex(exe ? { codexPathOverride: exe } : {});
     const threadOptions: ThreadOptions = {
       workingDirectory: opts.cwd,
-      sandboxMode: this.opts.sandboxMode ?? 'workspace-write',
+      sandboxMode: this.opts.sandboxMode ?? codexSandboxMode(opts.executionMode),
       skipGitRepoCheck: true,
       ...(opts.model && opts.model !== 'default' ? { model: opts.model } : {}),
     };
