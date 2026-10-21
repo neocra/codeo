@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AppShell, Banner, Button, Icon, Select } from '@codeo/ui-desktop';
+import { AppShell, Banner, Button, Icon, Select, StatusPill } from '@codeo/ui-desktop';
 import type { RuntimeStatus } from '../../shared/bridge-types';
 import { codeo } from './lib/api';
 import { useT } from './lib/i18n';
@@ -56,6 +56,7 @@ export function App() {
   }, [workspaces.data, workspaceId, setWorkspace]);
 
   const connected = runtime.state === 'connected';
+  const demo = runtime.info?.demoMode === true;
   const Screen = SCREENS[screen];
   const pending = approvals.data?.length ?? 0;
   const nav = [
@@ -105,6 +106,7 @@ export function App() {
             {t('workspaces.create')}
           </Button>
           <span className="cd-topbar__spacer" />
+          {demo ? <StatusPill tone="attention">{t('demo.badge')}</StatusPill> : null}
           {!connected ? (
             <span className="cd-row-gap cd-muted cd-body-sm">
               <Icon name="alert" size={14} />
@@ -117,6 +119,11 @@ export function App() {
       {runtime.state === 'failed' ? (
         <div style={{ padding: screen === 'sessions' ? 24 : 0, marginBottom: 16 }}>
           <Banner tone="error">{runtime.error ?? t('runtime.error')}</Banner>
+        </div>
+      ) : null}
+      {demo ? (
+        <div style={{ padding: screen === 'sessions' ? '24px 24px 0' : 0, marginBottom: 16 }}>
+          <Banner tone="warn">{t('demo.banner')}</Banner>
         </div>
       ) : null}
       <Screen />

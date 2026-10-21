@@ -25,6 +25,7 @@ const bridge: CodeoBridge = {
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   getPreference: (key, fallback) => ipcRenderer.invoke(IPC.getPreference, key, fallback),
   setPreference: (key, value) => ipcRenderer.invoke(IPC.setPreference, key, value),
+  setDemoMode: (enabled) => ipcRenderer.invoke(IPC.setDemoMode, enabled),
   userName: () => ipcRenderer.invoke(IPC.userName),
   checkForUpdates: () => ipcRenderer.invoke(IPC.updateCheck),
   installUpdate: () => ipcRenderer.invoke(IPC.updateInstall),
