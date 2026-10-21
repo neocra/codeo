@@ -308,7 +308,7 @@ export const en: Record<MessageKey, string> = {
   'updates.downloading': 'Downloading… {progress} %',
   'updates.ready': 'Update downloaded. Restart to apply it.',
   'updates.restart': 'Restart now',
-  'updates.manual': 'This build cannot install itself (unsigned application). Download it from GitHub.',
+  'updates.manual': 'The update cannot be installed in place (Codeo runs from the disk image or a protected folder). Move Codeo to Applications or download the new version from GitHub.',
   'updates.download': 'Open the download page',
   'updates.unsupported': 'Updates only apply to the installed application (not in development).',
   'updates.error': 'The check failed: {error}',

@@ -322,7 +322,7 @@ export const fr = {
   'updates.downloading': 'Téléchargement… {progress} %',
   'updates.ready': 'Mise à jour téléchargée. Redémarrez pour l’appliquer.',
   'updates.restart': 'Redémarrer maintenant',
-  'updates.manual': 'Cette version ne peut pas s’installer automatiquement (application non signée). Téléchargez-la depuis GitHub.',
+  'updates.manual': 'La mise à jour ne peut pas s’installer sur place (Codeo est lancé depuis l’image disque ou un dossier protégé). Déplacez Codeo dans Applications ou téléchargez la nouvelle version depuis GitHub.',
   'updates.download': 'Ouvrir la page de téléchargement',
   'updates.unsupported': 'Les mises à jour ne s’appliquent qu’à l’application installée (pas en développement).',
   'updates.error': 'La vérification a échoué : {error}',
