@@ -73,7 +73,7 @@ export async function detectClaudeCode(explicitPath?: string): Promise<ProviderS
       { id: 'opus', displayName: 'Opus', description: 'Le plus capable' },
       { id: 'haiku', displayName: 'Haiku', description: 'Le plus léger' },
     ],
-    modes: ['default', 'acceptEdits', 'plan'],
+    modes: ['default', 'acceptEdits', 'auto', 'plan'],
     error: null,
     checkedAt,
   };

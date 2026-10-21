@@ -56,8 +56,8 @@ export type Repository = z.infer<typeof RepositorySchema>;
  * capabilities — it never replaces them with a custom permission engine:
  *  - `manual`: every sensitive action needs a human decision (Claude `permissionMode:'default'`
  *    routed through Codeo approvals; Codex `sandboxMode:'read-only'`).
- *  - `auto`: edits inside the workspace are automatic, sensitive actions still escalate where the
- *    provider supports it (Claude `permissionMode:'acceptEdits'`; Codex `sandboxMode:'workspace-write'`).
+ *  - `auto`: the agent acts on its own, only actions the provider cannot clear itself escalate
+ *    (Claude `permissionMode:'auto'`, its classifier-based auto mode; Codex `sandboxMode:'workspace-write'`).
  *  - `full`: explicit opt-in unattended execution (Claude `permissionMode:'bypassPermissions'`;
  *    Codex `sandboxMode:'danger-full-access'`).
  */
