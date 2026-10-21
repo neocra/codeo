@@ -35,6 +35,8 @@ export interface CodeoBridge {
   openExternal(url: string): Promise<void>;
   getPreference<T>(key: string, fallback: T): Promise<T>;
   setPreference(key: string, value: unknown): Promise<void>;
+  /** Restarts the runtime in demo mode (separate data directory) or back in live mode. */
+  setDemoMode(enabled: boolean): Promise<void>;
   userName(): Promise<string>;
   checkForUpdates(): Promise<UpdateStatus>;
   installUpdate(): Promise<UpdateStatus>;
@@ -52,6 +54,7 @@ export const IPC = {
   openExternal: 'codeo:open-external',
   getPreference: 'codeo:get-preference',
   setPreference: 'codeo:set-preference',
+  setDemoMode: 'codeo:set-demo-mode',
   userName: 'codeo:user-name',
   updateCheck: 'codeo:update-check',
   updateInstall: 'codeo:update-install',

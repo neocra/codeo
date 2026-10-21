@@ -8,6 +8,9 @@ import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskR
 import type { Machine } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
 import { createLogger, KeyedLock, newId, type Logger } from '@codeo/shared-utils';
+import { DEMO_LIVE_TASK_ID, DEMO_PATH_PREFIX } from './demo/dataset';
+import { demoProviders } from './demo/provider';
+import { assertDataMode, seedDemoData } from './demo/seed';
 import { EventBus } from './event-bus';
 import { ApprovalService } from './services/approvals';
 import { ProviderRegistry } from './services/providers';
@@ -26,6 +29,13 @@ export interface RuntimeOptions {
   migrationsFolder?: string;
   /** Where agent worktrees are created. Defaults to `<dataDir>/worktrees` (a temp dir for in-memory runtimes). */
   worktreesDir?: string;
+  /**
+   * Demo mode: fictional Elyndor / Codeo Cloud dataset and scripted agents, nothing real is
+   * executed. The data directory must be dedicated to demo mode (checked at boot).
+   */
+  demo?: boolean;
+  /** Delay between scripted demo agent steps (tests use 0). */
+  demoStepMs?: number;
 }
 
 export interface CallContext {
@@ -59,6 +69,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     ...(opts.migrationsFolder ? { migrationsFolder: opts.migrationsFolder } : {}),
   });
   const settings = new SettingsRepo(db.db);
+  const demo = opts.demo === true;
+  const workspaceRepo = new WorkspaceRepo(db.db);
+  try {
+    await assertDataMode(settings, workspaceRepo, demo ? 'demo' : 'live');
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   const machineId = await settings.get<string | null>('machineId', null) ?? newId('mac');
   await settings.set('machineId', machineId);
   const machine: Machine = {
@@ -72,21 +90,28 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
 
   const bus = new EventBus(new EventRepo(db.db), log.child('events'));
   await bus.init();
-  const providers = new ProviderRegistry(opts.providers ?? [new ClaudeCodeProvider(), new CodexProvider()], bus, log.child('providers'));
-  const workspaces = new WorkspaceService(new WorkspaceRepo(db.db), bus, machineId);
-  const approvals = new ApprovalService(new ApprovalRepo(db.db), bus, log.child('approvals'));
+  const providerList = opts.providers ?? (demo ? demoProviders(opts.demoStepMs) : [new ClaudeCodeProvider(), new CodexProvider()]);
+  const providers = new ProviderRegistry(providerList, bus, log.child('providers'));
+  const workspaces = new WorkspaceService(workspaceRepo, bus, machineId);
+  const approvalRepo = new ApprovalRepo(db.db);
+  const sessionRepo = new SessionRepo(db.db);
+  const taskRepo = new TaskRepo(db.db);
+  const approvals = new ApprovalService(approvalRepo, bus, log.child('approvals'));
   const worktreeLocks = new KeyedLock();
-  const sessions = new SessionService(new SessionRepo(db.db), workspaces, providers, approvals, bus, log.child('sessions'), worktreeLocks);
+  const sessions = new SessionService(sessionRepo, workspaces, providers, approvals, bus, log.child('sessions'), worktreeLocks);
+  /* Demo sessions run in fictional `demo://` folders, and only there. */
+  if (demo) sessions.cwdAvailable = (cwd) => cwd.startsWith(DEMO_PATH_PREFIX);
   const worktreesDir = opts.worktreesDir ?? (opts.dataDir === ':memory:' ? path.join(os.tmpdir(), 'codeo-worktrees') : path.join(opts.dataDir, 'worktrees'));
   const workspaceLocks = new KeyedLock();
   const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir, workspaceLocks);
   sessions.worktreeValidator = (worktreeId) => worktrees.assertIntact(worktreeId);
-  const tasks = new TaskService(new TaskRepo(db.db), workspaces, sessions, worktrees, bus, log.child('tasks'));
+  const tasks = new TaskService(taskRepo, workspaces, sessions, worktrees, bus, log.child('tasks'));
   await approvals.init();
   await sessions.init();
   await tasks.init();
   /* Only once the tasks have recorded the idle sessions' completed turns do those sessions become disconnected. */
   await sessions.disconnectIdle();
+  const demoSeeded = demo && (await seedDemoData({ settings, workspaces: workspaceRepo, tasks: taskRepo, sessions: sessionRepo, approvals: approvalRepo }, machineId));
 
   const info: RuntimeInfo = {
     version: RUNTIME_VERSION,
@@ -94,11 +119,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     machine,
     dataDir: opts.dataDir,
     startedAt: new Date().toISOString(),
-    demoMode: false,
+    demoMode: demo,
   };
 
   if (opts.detectProviders !== false) {
-    void providers.detectAll().then((list) => log.info('providers detected', { providers: list.map((p) => `${p.provider}:${p.installed ? p.version : 'absent'}:${p.authenticated}`) }));
+    const detected = providers.detectAll();
+    void detected.then((list) => log.info('providers detected', { providers: list.map((p) => `${p.provider}:${p.installed ? p.version : 'absent'}:${p.authenticated}`) }));
+    /* First demo boot: start one scripted task so a live session and a pending approval are on screen. */
+    if (demoSeeded) void detected.then(() => tasks.start(DEMO_LIVE_TASK_ID)).catch((err) => log.warn('demo live task failed', { err: String(err) }));
   }
 
   /* Worktrees hold agent work: a workspace or repository cannot disappear from under them. */
@@ -109,14 +137,20 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     }
   }
 
+  /* Demo data is fictional: never let it reach real folders on the machine. */
+  const realPathsOnly = (p: string) => {
+    if (demo) throw localizedError('FORBIDDEN', 'demo.realRepository', undefined, 'Mode démo : les dépôts réels se gèrent en mode réel.');
+    return p;
+  };
+
   const handlers: Handlers = {
     'runtime.info': async () => info,
     'providers.list': async ({ refresh }) => (refresh || providers.list().length === 0 ? providers.detectAll() : providers.list()),
-    'repositories.inspect': async ({ path: p }) => inspectRepository(p),
+    'repositories.inspect': async ({ path: p }) => inspectRepository(realPathsOnly(p)),
     'workspaces.list': async () => workspaces.list(),
-    'workspaces.create': async (p) => workspaces.create(p),
+    'workspaces.create': async (p) => (p.repositoryPaths.forEach(realPathsOnly), workspaces.create(p)),
     'workspaces.update': async (p) => workspaces.update(p.workspaceId, { defaultExecutionMode: p.defaultExecutionMode }),
-    'workspaces.addRepository': async (p) => workspaces.addRepository(p.workspaceId, p.path),
+    'workspaces.addRepository': async (p) => workspaces.addRepository(p.workspaceId, realPathsOnly(p.path)),
     'workspaces.removeRepository': async (p) =>
       workspaceLocks.run(p.workspaceId, async () => {
         await assertNoWorktrees(p.workspaceId, p.repositoryId);
@@ -129,7 +163,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
       }),
     'tasks.list': async (p) => tasks.list(p.workspaceId),
     'tasks.get': async (p) => tasks.get(p.taskId),
-    'tasks.create': async (p) => tasks.create(p),
+    /* Demo repositories are not Git checkouts: agents work "in place" (scripted, nothing is written). */
+    'tasks.create': async (p) => tasks.create(demo ? { ...p, isolation: 'none' } : p),
     'tasks.start': async (p) => tasks.start(p.taskId),
     'tasks.cancel': async (p) => tasks.cancel(p.taskId),
     'tasks.pause': async (p) => tasks.pause(p.taskId),

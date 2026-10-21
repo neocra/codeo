@@ -1,6 +1,6 @@
 # Progress
 
-_Updated: 2026-10-11_
+_Updated: 2026-10-21_
 
 ## Current milestone: Phase 4 — worktree isolation + orchestration modes
 
@@ -37,13 +37,20 @@ _Updated: 2026-10-11_
   Workspaces, Tasks (create + start), Sessions (live chat, tool calls, approvals, stop), Settings
   (provider detection), plus clearly labelled placeholders for Tickets, Review, Plugins.
 - Mobile foundation (Expo) and Gateway skeleton (see their READMEs).
+- Demo mode (`CODEO_DEMO=1`, Settings → Mode démo): fictional Elyndor (Unity, multi-repo) and Codeo Cloud
+  (SaaS monorepo) workspaces with tasks, transcripts and past approvals (`apps/runtime/src/demo`). Scripted
+  agents (`DemoProvider`, reported as `version: demo`, no executable) stream a turn and go through a real
+  Codeo approval; nothing is spawned or written. Separation: the desktop runs the demo runtime on
+  `~/.codeo/demo` (own database and discovery file); each database records its mode and a runtime refuses
+  to open data of the other mode; demo runtimes refuse real repository paths. The UI shows a "Démo" badge
+  and a banner whenever `runtime.info.demoMode` is true.
 
 ### Known limitations
 - Tickets (Jira/GitHub), Review (diffs from worktrees/PRs), Pull Requests, Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Worktrees: agents' changes stay uncommitted in the worktree; nothing merges them back yet (phase 5 review/PR). No automatic cleanup of old worktrees; removal is manual from the task detail. Best-of-N has no "pick the winner" action yet (phase 5).
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
 - Task completion (`review` → `completed`) has no command yet; it belongs to the phase 5 review flow.
-- Demo mode with the Elyndor / Codeo Cloud datasets: not yet implemented.
+- Demo mode: tickets, review diffs and PRs have no demo data yet (their screens are still placeholders). Demo repositories are not Git checkouts, so demo tasks run without worktree isolation (parallel / best-of-N are refused there). The demo dataset is written once; delete `~/.codeo/demo` to reset it.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox (`workspace-write`).
 - Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
@@ -51,7 +58,7 @@ _Updated: 2026-10-11_
 ### Next priorities
 1. Review screen on real worktree diffs (`@codeo/git` `unifiedDiff` against `worktree.baseBranch`), accept/complete a task, pick the best-of-N winner, then PR creation via `gh`/GitHub API (phase 5).
 2. Runtime relay client to the gateway + mobile pairing by QR (phase 6/7).
-3. Demo mode dataset, clearly separated from live data.
+3. ~~Demo mode dataset, clearly separated from live data.~~ Done 2026-10-21 (see above).
 
 ## Verification log — 2026-10-11 (phase 4)
 
@@ -81,3 +88,14 @@ Not verified in this session: the new desktop dialog/detail clicked through in t
 | Screenshots | `docs/design/screenshots/*.png` captured from the built app with `CODEO_SCREENSHOT_DIR` (compare with `docs/design/references/home-desktop.webp`) |
 
 Not verified in this session: mobile app on a device/simulator (code typechecks; Metro/Expo run not executed), gateway against a real runtime relay client (phase 6), packaged installers.
+
+## Verification log — 2026-10-21 (demo mode)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` / `pnpm lint` | 17/17 clean |
+| `pnpm test` | all suites pass; `demo.test.ts` 7 tests (dataset validity, scripted task through a manual-mode approval, resume of a seeded session, new task in auto mode without worktree or approval, demo/live data-mode separation) |
+| `CODEO_DEMO=1` standalone runtime bundle | boots, detects `claude-code:demo`, `codex:demo`, `runtime.json` flags `demoMode: true` |
+| `electron-vite build` | ok |
+
+Not verified: the Settings toggle and banner in the running Electron app (no interactive session).
