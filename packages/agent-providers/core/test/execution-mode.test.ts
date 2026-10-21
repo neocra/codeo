@@ -4,7 +4,7 @@ import { claudePermissionMode, codexSandboxMode, EXECUTION_MODES, supportsPerAct
 describe('execution mode → native provider policy', () => {
   it('maps every mode to a Claude permission mode', () => {
     expect(claudePermissionMode('manual')).toBe('default');
-    expect(claudePermissionMode('auto')).toBe('acceptEdits');
+    expect(claudePermissionMode('auto')).toBe('auto');
     expect(claudePermissionMode('full')).toBe('bypassPermissions');
   });
 

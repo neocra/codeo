@@ -134,7 +134,7 @@ export const fr = {
   'workspaces.defaultExecutionMode': 'Mode d’exécution par défaut',
   'workspaces.defaultExecutionMode.hint': 'S’applique aux nouvelles sessions et tâches ; chacune peut le remplacer.',
   'executionMode.auto': 'Auto',
-  'executionMode.auto.desc': 'L’agent agit de façon autonome ; les actions sensibles sont remontées quand le fournisseur le permet.',
+  'executionMode.auto.desc': 'L’agent agit de façon autonome. Claude Code : son mode auto valide lui-même les actions courantes et ne remonte que celles qu’il ne peut pas trancher. Codex : modifications dans le bac à sable de l’espace de travail.',
   'executionMode.full': 'Pleine autonomie',
   'executionMode.full.desc': 'Exécution sans surveillance : l’agent n’attend aucune validation. À n’activer qu’en connaissance de cause.',
   'session.executionMode.manual': 'Mode d’exécution : manuel.',

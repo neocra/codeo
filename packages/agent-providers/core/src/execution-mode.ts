@@ -7,7 +7,7 @@ import type { AgentProviderId, ExecutionMode } from '@codeo/domain';
  */
 
 /** Claude Code native permission mode (subset of the SDK's `permissionMode`). */
-export type ClaudePermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions';
+export type ClaudePermissionMode = 'default' | 'auto' | 'bypassPermissions';
 
 /** Codex native sandbox mode (the SDK's `ThreadOptions['sandboxMode']`). */
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
@@ -15,7 +15,9 @@ export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-ac
 /**
  * Map an execution mode to Claude Code's native `permissionMode`.
  *  - `manual` → `default`: every sensitive tool goes through `canUseTool` (Codeo approvals).
- *  - `auto` → `acceptEdits`: edits auto-approved, other sensitive tools still escalate.
+ *  - `auto` → `auto`: Claude Code's native auto mode — its classifier approves or denies each
+ *    call and only escalates through `canUseTool` (Codeo approvals) when it cannot decide.
+ *    (`acceptEdits` would still prompt for every shell command.)
  *  - `full` → `bypassPermissions`: explicit opt-in unattended run.
  */
 export function claudePermissionMode(mode: ExecutionMode): ClaudePermissionMode {
@@ -23,7 +25,7 @@ export function claudePermissionMode(mode: ExecutionMode): ClaudePermissionMode 
     case 'manual':
       return 'default';
     case 'auto':
-      return 'acceptEdits';
+      return 'auto';
     case 'full':
       return 'bypassPermissions';
   }
