@@ -37,14 +37,17 @@ the button **Installer et redémarrer** downloads it and restarts into it. Nothi
 without that click; `autoInstallOnAppQuit` applies a downloaded update at quit.
 
 - Windows (NSIS) and Linux (AppImage) self-update without signing.
-- **macOS requires a signed app** for self-update (Squirrel.Mac rejects unsigned bundles). Without
-  `CSC_LINK` / `CSC_KEY_PASSWORD` secrets the workflow produces builds that are only **ad-hoc
-  signed** (`scripts/after-pack.cjs`): they open, but Gatekeeper asks the user to allow the app
-  once (*System Settings → Privacy & Security → Open Anyway* after the first blocked launch), and
-  the app reports the *manual* update state and offers the download page instead. Add the
+- **macOS**: without `CSC_LINK` / `CSC_KEY_PASSWORD` secrets the workflow produces builds that are
+  only **ad-hoc signed** (`scripts/after-pack.cjs`): they open, but Gatekeeper asks the user to
+  allow the app once (*System Settings → Privacy & Security → Open Anyway* after the first blocked
+  launch). Squirrel.Mac rejects such bundles, so `apps/desktop/src/main/mac-installer.ts` bypasses
+  it: it downloads `Codeo-<v>-mac-<arch>.zip`, checks its sha512 against `latest-mac.yml`, unpacks
+  it with `ditto`, and a detached `/bin/sh` swaps the `.app` once Codeo has exited (restoring the
+  old bundle if the move fails), then relaunches it. The *manual* state (download page) only
+  remains when the bundle cannot be replaced in place: launched from the DMG (`/Volumes`), App
+  Translocation (not moved out of Downloads), or a folder the user cannot write to. Adding the
   Developer ID certificate as secrets (and `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
-  `APPLE_TEAM_ID` plus `notarize: true` in `electron-builder.yml`) to enable automatic updates on
-  macOS.
+  `APPLE_TEAM_ID` plus `notarize: true` in `electron-builder.yml`) removes the Gatekeeper prompt.
   - Builds published before the ad-hoc signature (0.1.1) are reported as *damaged* by macOS. They
     can be repaired by hand after copying the app to `/Applications`:
     `xattr -dr com.apple.quarantine /Applications/Codeo.app && codesign --force --deep --sign - /Applications/Codeo.app`.
