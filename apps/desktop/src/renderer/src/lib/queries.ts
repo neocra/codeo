@@ -13,6 +13,8 @@ export const keys = {
   session: (id: string) => ['session', id] as const,
   approvals: ['approvals', 'pending'] as const,
   worktrees: (taskId: string) => ['worktrees', taskId] as const,
+  /** Under the task's worktrees key, so every task/worktree event that refreshes the lanes refreshes their diffs too. */
+  worktreeDiff: (taskId: string, worktreeId: string) => ['worktrees', taskId, 'diff', worktreeId] as const,
   home: (workspaceId?: string | null) => ['home', workspaceId ?? 'default'] as const,
 };
 
@@ -26,6 +28,8 @@ export const useSession = (id: string | null) =>
   useQuery({ queryKey: keys.session(id ?? ''), queryFn: () => invoke('sessions.get', { sessionId: id! }), enabled: Boolean(id) });
 export const useWorktrees = (taskId: string | null) =>
   useQuery({ queryKey: keys.worktrees(taskId ?? ''), queryFn: () => invoke('worktrees.list', { taskId: taskId! }), enabled: Boolean(taskId) });
+export const useWorktreeDiff = (taskId: string, worktreeId: string) =>
+  useQuery({ queryKey: keys.worktreeDiff(taskId, worktreeId), queryFn: () => invoke('worktrees.diff', { worktreeId }) });
 export const usePendingApprovals = () => useQuery({ queryKey: keys.approvals, queryFn: () => invoke('approvals.list', { status: 'pending' }) });
 export const useHome = (workspaceId: string | null) =>
   useQuery({ queryKey: keys.home(workspaceId), queryFn: () => invoke('home.summary', workspaceId ? { workspaceId } : {}) });

@@ -126,6 +126,7 @@ export class TaskRepo {
       repositoryIds: json(t.repositoryIds),
       subtasks: json(t.subtasks),
       progress: Math.round(t.progress),
+      winnerSubtaskId: t.winnerSubtaskId,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
       startedAt: t.startedAt,

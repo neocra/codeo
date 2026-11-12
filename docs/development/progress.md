@@ -1,8 +1,23 @@
 # Progress
 
-_Updated: 2026-10-11_
+_Updated: 2026-11-12_
 
-## Current milestone: Phase 4 — worktree isolation + orchestration modes
+## Current milestone: Phase 5 — review and pull requests (in progress)
+
+### Phase 5, step 1: review on real worktree diffs (done and verified)
+- `@codeo/git` `worktreeChanges(dir, base)`: everything a worktree changed since its merge base with the base
+  branch — its commits **and** its uncommitted work, untracked files included — computed through a throwaway
+  index file (`GIT_INDEX_FILE`), so the worktree's index, files and branch are never touched. `parseUnifiedDiff`
+  turns the patch into files/hunks/lines with exact counts and a line budget (3,000 per file, 20,000 total).
+- Command `worktrees.diff` (scope `read`); the base ref is resolved in the repository itself.
+- Command `tasks.complete` (`review` → `completed`, progress 100): Best-of-N requires `winnerSubtaskId`, a
+  completed candidate, stored on the task (`tasks.winner_subtask_id`, migration 0003); other modes refuse one.
+  Idle agents are released (session `completed`, note `taskCompleted`); worktrees and branches are kept.
+- Desktop Review screen: tasks in review, per-lane diff (branch ← base, +/−, commits, uncommitted badge,
+  collapsible files rendered with `DiffView`), Best-of-N candidate tabs with "Keep this proposal", "Complete the
+  task" otherwise; Task detail links to it. PR creation is shown as a labelled phase 5 placeholder.
+
+## Phase 4 — worktree isolation + orchestration modes
 
 ### Phase 4 (done and verified)
 - Each task runs its agents in Git worktrees under `<dataDir>/worktrees/<repoId>/…` (never inside the
@@ -40,18 +55,29 @@ _Updated: 2026-10-11_
 
 ### Known limitations
 - Tickets (Jira/GitHub), Review (diffs from worktrees/PRs), Pull Requests, Plugins: phase 5/8 — screens exist as labelled placeholders.
-- Worktrees: agents' changes stay uncommitted in the worktree; nothing merges them back yet (phase 5 review/PR). No automatic cleanup of old worktrees; removal is manual from the task detail. Best-of-N has no "pick the winner" action yet (phase 5).
+- Worktrees: agents' changes stay uncommitted in the worktree; they can be reviewed and the task completed, but nothing commits, pushes or merges them yet (PR creation is the next step). No automatic cleanup of old worktrees; removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees.
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
-- Task completion (`review` → `completed`) has no command yet; it belongs to the phase 5 review flow.
+- Review has no inline comments or "request changes" loop yet: to iterate, talk to the agent from its session while the task is in review.
 - Demo mode with the Elyndor / Codeo Cloud datasets: not yet implemented.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox (`workspace-write`).
 - Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
-1. Review screen on real worktree diffs (`@codeo/git` `unifiedDiff` against `worktree.baseBranch`), accept/complete a task, pick the best-of-N winner, then PR creation via `gh`/GitHub API (phase 5).
+1. PR creation from a reviewed task (commit the winning/shared worktree, push its `codeo/…` branch, open the PR via `gh`), PR status on the task, Pull Requests screen (phase 5).
 2. Runtime relay client to the gateway + mobile pairing by QR (phase 6/7).
 3. Demo mode dataset, clearly separated from live data.
+
+## Verification log — 2026-11-12 (phase 5, review)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` (17 packages/apps) | clean |
+| `pnpm test` | 128 tests passed, 0 failed (git 13 incl. a real worktree diff with commit + edit + delete + untracked + later work on main; runtime 24 incl. diff → complete → agents released, Best-of-N winner rules) |
+| `pnpm lint` | 0 errors |
+| `tsup` runtime bundle, `electron-vite build` | built; `dist/migrations` contains `0003_review_winner.sql` |
+
+Not verified in this session: the Review screen clicked through in the running Electron app (typechecked and built only); a diff on a real Claude Code / Codex worktree.
 
 ## Verification log — 2026-10-11 (phase 4)
 

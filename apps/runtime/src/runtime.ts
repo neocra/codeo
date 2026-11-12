@@ -131,10 +131,12 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'tasks.get': async (p) => tasks.get(p.taskId),
     'tasks.create': async (p) => tasks.create(p),
     'tasks.start': async (p) => tasks.start(p.taskId),
+    'tasks.complete': async (p) => tasks.complete(p.taskId, p.winnerSubtaskId),
     'tasks.cancel': async (p) => tasks.cancel(p.taskId),
     'tasks.pause': async (p) => tasks.pause(p.taskId),
     'tasks.resume': async (p) => tasks.resume(p.taskId),
     'worktrees.list': async (p) => worktrees.list(p),
+    'worktrees.diff': async (p) => worktrees.diff(p.worktreeId),
     'worktrees.remove': async (p) => {
       const target = await worktrees.get(p.worktreeId);
       /* Same lock as session launch/send into this directory (keyed by path: a recreated lane keeps it). */

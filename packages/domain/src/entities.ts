@@ -208,6 +208,8 @@ export const TaskSchema = z.object({
   repositoryIds: z.array(IdSchema).default([]),
   subtasks: z.array(SubtaskSchema).default([]),
   progress: z.number().min(0).max(100).default(0),
+  /** Best-of-N: the candidate the human kept when completing the review (null otherwise). */
+  winnerSubtaskId: IdSchema.nullable().default(null),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
   startedAt: IsoDateSchema.nullable().default(null),

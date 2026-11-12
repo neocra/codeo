@@ -351,6 +351,7 @@ export class TaskService {
       repositoryIds,
       subtasks,
       progress: 0,
+      winnerSubtaskId: null,
       createdAt: now,
       updatedAt: now,
       startedAt: null,
@@ -424,6 +425,65 @@ export class TaskService {
           ? firstError
           : new RuntimeError('PROVIDER_UNAVAILABLE', errors[0]!);
       return { task: advanced, sessions };
+    });
+  }
+
+  /**
+   * Closes the human review. Best-of-N keeps one completed candidate (recorded as the winner); other modes take
+   * none. Idle agents are released (their provider process closes); worktrees and branches stay for the PR flow.
+   */
+  complete(taskId: string, winnerSubtaskId?: string): Promise<Task> {
+    return this.locked(taskId, async () => {
+      const task = await this.get(taskId);
+      if (task.status !== 'review')
+        throw localizedError(
+          'CONFLICT',
+          'task.notInReview',
+          undefined,
+          'Seule une tâche en revue peut être validée.',
+        );
+      if (task.orchestration === 'best-of-n') {
+        if (!winnerSubtaskId)
+          throw localizedError(
+            'INVALID_PARAMS',
+            'task.winnerRequired',
+            undefined,
+            'Choisissez la proposition à garder avant de valider.',
+          );
+        const winner = task.subtasks.find((s) => s.id === winnerSubtaskId);
+        if (!winner || winner.status !== 'completed')
+          throw localizedError(
+            'INVALID_PARAMS',
+            'task.winnerInvalid',
+            undefined,
+            'La proposition choisie n’est pas un candidat terminé de cette tâche.',
+          );
+      } else if (winnerSubtaskId) {
+        throw localizedError(
+          'INVALID_PARAMS',
+          'task.winnerNotBestOfN',
+          undefined,
+          'Seul le mode Best-of-N choisit une proposition gagnante.',
+        );
+      }
+      const updated = await this.save(task, 'completed', {
+        progress: 100,
+        completedAt: new Date().toISOString(),
+        winnerSubtaskId: winnerSubtaskId ?? null,
+      });
+      /* The task is completed either way: a provider that fails to close is logged, never resurrects the review. */
+      for (const s of task.subtasks) {
+        if (!s.sessionId || !this.sessions.isLive(s.sessionId)) continue;
+        await this.sessions
+          .release(s.sessionId, { key: 'taskCompleted', text: 'Session fermée : la tâche a été validée.' })
+          .catch((err) =>
+            this.log.warn('session release after completion failed', {
+              sessionId: s.sessionId,
+              err: String(err),
+            }),
+          );
+      }
+      return updated;
     });
   }
 

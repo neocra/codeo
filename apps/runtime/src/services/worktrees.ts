@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { localizedError } from '@codeo/contracts';
+import { localizedError, type WorktreeDiff } from '@codeo/contracts';
 import type { WorktreeRepo } from '@codeo/database';
 import {
   sharesWorktree,
@@ -16,6 +16,7 @@ import {
   listWorktrees,
   removeWorktree,
   resolveCommit,
+  worktreeChanges,
   worktreeIdentity,
 } from '@codeo/git';
 import { newId, type KeyedLock, type Logger } from '@codeo/shared-utils';
@@ -103,7 +104,6 @@ export class WorktreeService {
     return w;
   }
 
-  /** The git worktree registered at `dir`, if any; git reports canonical paths (e.g. /private/tmp on macOS). */
   /** Removes git's registration of a lane whose directory is gone — and nothing else. A no-op when git has none. */
   private async forgetRegistration(repositoryPath: string, dir: string): Promise<void> {
     const registered = (await listWorktrees(repositoryPath).catch(() => [])).some(
@@ -277,6 +277,43 @@ export class WorktreeService {
     }
     this.bus.publish('WorktreeCreated', { worktree });
     return worktree;
+  }
+
+  /**
+   * What the lane changed against its base branch: its commits and its uncommitted work (untracked files included).
+   * Read-only for the worktree (a throwaway index is used). The base is resolved in the repository itself, so a
+   * `HEAD` base means the repository's checkout, never the worktree's own HEAD.
+   */
+  async diff(id: string): Promise<WorktreeDiff> {
+    const worktree = await this.get(id);
+    if (!existsSync(worktree.path))
+      throw localizedError(
+        'CONFLICT',
+        'worktree.missing',
+        { path: worktree.path },
+        `Le dossier du worktree ${worktree.path} n’existe plus : ses changements ne peuvent pas être affichés.`,
+      );
+    const repository = (await this.workspaces.get(worktree.workspaceId)).repositories.find(
+      (r) => r.id === worktree.repositoryId,
+    );
+    const base =
+      (repository && existsSync(repository.path)
+        ? await resolveCommit(repository.path, worktree.baseBranch)
+        : null) ?? worktree.baseBranch;
+    const changes = await worktreeChanges(worktree.path, base);
+    return {
+      worktreeId: worktree.id,
+      branch: worktree.branch,
+      baseBranch: worktree.baseBranch,
+      mergeBase: changes.mergeBase,
+      head: changes.head,
+      commits: changes.commits,
+      uncommitted: changes.uncommitted,
+      files: changes.files,
+      additions: changes.additions,
+      deletions: changes.deletions,
+      truncated: changes.truncated,
+    };
   }
 
   /** Removes the directory; the branch (and every commit on it) stays in the repository. */

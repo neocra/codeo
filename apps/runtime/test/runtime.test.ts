@@ -284,6 +284,52 @@ describe('orchestration and worktrees', () => {
     expect(after.subtasks.map((s) => s.status)).toEqual(['completed', 'failed', 'completed']);
   });
 
+  it('shows a worktree diff against its base, then completes the review and releases the agents', async () => {
+    const task = await client.request('tasks.create', { workspaceId: await wsId(), title: 'Diff', objective: 'Changer a.txt', provider: 'claude-code' });
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'review');
+    const [wt] = await client.request('worktrees.list', { taskId: task.id });
+    /* The fake agent writes nothing: stand in for its work directly in the worktree. */
+    writeFileSync(path.join(wt!.path, 'a.txt'), 'b\n');
+    writeFileSync(path.join(wt!.path, 'new.md'), '# nouveau\n');
+    const diff = await client.request('worktrees.diff', { worktreeId: wt!.id });
+    expect(diff.uncommitted).toBe(true);
+    expect(diff.commits).toBe(0);
+    expect(diff.files.map((f) => [f.path, f.status]).sort()).toEqual([['a.txt', 'modified'], ['new.md', 'added']]);
+    expect(diff.files.find((f) => f.path === 'new.md')?.hunks[0]?.lines[0]).toEqual({ type: 'add', old: null, new: 1, text: '# nouveau' });
+
+    await expect(client.request('tasks.complete', { taskId: task.id, winnerSubtaskId: task.subtasks[0]!.id })).rejects.toThrow(/Best-of-N/);
+    const done = await client.request('tasks.complete', { taskId: task.id });
+    expect(done.status).toBe('completed');
+    expect(done.progress).toBe(100);
+    expect(done.completedAt).not.toBeNull();
+    expect(done.winnerSubtaskId).toBeNull();
+    const sessionId = done.subtasks[0]!.sessionId!;
+    await waitFor(async () => (await client.request('sessions.get', { sessionId })).session.status === 'completed');
+    expect(runtime.services.sessions.isLive(sessionId)).toBe(false);
+    await expect(client.request('sessions.send', { sessionId, text: 'encore' })).rejects.toThrow(/terminée/);
+    await expect(client.request('tasks.complete', { taskId: task.id })).rejects.toThrow(/en revue/);
+    /* Completion keeps the work: the worktree and its changes are still there for the PR flow. */
+    expect((await client.request('worktrees.diff', { worktreeId: wt!.id })).files).toHaveLength(2);
+  });
+
+  it('completes a best-of-n review only with a finished candidate as the winner', async () => {
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Choix', objective: 'Deux essais', provider: 'claude-code', orchestration: 'best-of-n',
+      subtasks: [agent(), agent({ model: 'broken' }), agent()],
+    });
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'review');
+    const [first, broken, third] = (await client.request('tasks.get', { taskId: task.id })).subtasks;
+    await expect(client.request('tasks.complete', { taskId: task.id })).rejects.toThrow(/Choisissez/);
+    await expect(client.request('tasks.complete', { taskId: task.id, winnerSubtaskId: broken!.id })).rejects.toThrow(/candidat terminé/);
+    const done = await client.request('tasks.complete', { taskId: task.id, winnerSubtaskId: third!.id });
+    expect(done.status).toBe('completed');
+    expect(done.winnerSubtaskId).toBe(third!.id);
+    expect((await client.request('tasks.get', { taskId: task.id })).winnerSubtaskId).toBe(third!.id);
+    expect(first!.status).toBe('completed');
+  });
+
   it('fails a pipeline whose step cannot start, cancels the blocked steps, and retries in the same worktree', async () => {
     const task = await client.request('tasks.create', {
       workspaceId: await wsId(), title: 'Fragile', provider: 'claude-code', orchestration: 'sequential',

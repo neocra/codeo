@@ -18,6 +18,7 @@ export function TaskDetail({ task }: { task: Task }) {
   const t = useT();
   const qc = useQueryClient();
   const openSession = useUi((s) => s.openSession);
+  const openReview = useUi((s) => s.openReview);
   const worktrees = useWorktrees(task.id);
   const sessions = useSessions(task.workspaceId);
   /* A pause that could not stop every agent leaves sessions active: the runtime expects the pause to be retried. */
@@ -121,6 +122,11 @@ export function TaskDetail({ task }: { task: Task }) {
           {task.status === 'paused' ? (
             <Button variant="primary" size="sm" icon="play" loading={resume.isPending} disabled={stopPending} onClick={() => resume.mutate()}>
               {t('action.resume')}
+            </Button>
+          ) : null}
+          {task.status === 'review' ? (
+            <Button variant="primary" size="sm" icon="review" onClick={() => openReview(task.id)}>
+              {t('review.open')}
             </Button>
           ) : null}
           {['running', 'waiting_approval', 'queued', 'paused', 'review'].includes(task.status) ? (
