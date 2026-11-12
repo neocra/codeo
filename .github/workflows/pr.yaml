@@ -1,0 +1,27 @@
+name: PR
+
+# The only workflow pull requests trigger. It calls the others through `workflow_call` and
+# ends in "All Green / All Green": the single status check branch protection requires, so
+# adding or renaming a job never means editing the protection rule.
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  all-green:
+    name: All Green
+    if: ${{ always() }}
+    needs: [ci]
+    uses: ./.github/workflows/all-green.yml
+    with:
+      needs: ${{ toJSON(needs) }}
