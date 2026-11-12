@@ -83,6 +83,7 @@ export function applyEvent(qc: QueryClient, event: RuntimeEvent): void {
     case 'PullRequestCreated':
     case 'PullRequestUpdated':
       void qc.invalidateQueries({ queryKey: ['pullRequests'] });
+      void qc.invalidateQueries({ queryKey: ['home'] });
       /* Publishing commits the worktree: its diff now shows commits instead of uncommitted work. */
       if (event.pullRequest.taskId) void qc.invalidateQueries({ queryKey: ['worktrees', event.pullRequest.taskId] });
       return;

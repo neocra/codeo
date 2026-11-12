@@ -3,10 +3,11 @@ import type { Task } from '@codeo/domain';
 import { Button, Card, EmptyState, PageHeader, Tabs, TaskRow } from '@codeo/ui-desktop';
 import { ApprovalItem } from '../components/ApprovalItem';
 import { CreateTaskDialog } from '../components/CreateTaskDialog';
+import { prNumbers } from '../components/PullRequestRow';
 import { TaskDetail } from '../components/TaskDetail';
 import { taskTone } from '../components/status';
 import { useT } from '../lib/i18n';
-import { usePendingApprovals, useTasks, useWorkspaces } from '../lib/queries';
+import { usePendingApprovals, useTasks, useWorkspacePullRequests, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
 
 type Filter = 'all' | 'active' | 'waiting' | 'done';
@@ -18,6 +19,7 @@ export function TasksScreen() {
   const { workspaceId } = useUi();
   const tasks = useTasks(workspaceId);
   const approvals = usePendingApprovals();
+  const prs = useWorkspacePullRequests(workspaceId);
   const workspaces = useWorkspaces();
   const ws = workspaces.data?.find((w) => w.id === workspaceId);
   const [filter, setFilter] = useState<Filter>('all');
@@ -26,6 +28,11 @@ export function TasksScreen() {
   const list = (tasks.data ?? []).filter((x) => matches(x, filter));
   const selectedTask = (tasks.data ?? []).find((x) => x.id === selected) ?? null;
   const repoNames = (ids: string[]) => (ws?.repositories ?? []).filter((r) => ids.includes(r.id)).map((r) => r.name);
+  /* Oldest first, so the badge reads in the order the PRs were opened. */
+  const prBadge = (taskId: string) => {
+    const own = (prs.data ?? []).filter((p) => p.taskId === taskId).reverse();
+    return own.length ? t('pr.badge', { numbers: prNumbers(own) }) : undefined;
+  };
   const count = (f: Filter) => (tasks.data ?? []).filter((x) => matches(x, f)).length;
 
   return (
@@ -62,7 +69,7 @@ export function TasksScreen() {
             const st = taskTone(task.status);
             return (
               <div key={task.id}>
-                <TaskRow ticket={task.ticketKey ?? '—'} title={task.title} repos={repoNames(task.repositoryIds)} progress={task.progress} tone={st.tone} statusLabel={t(st.key)} index={i} selected={task.id === selected} onClick={() => setSelected(task.id === selected ? null : task.id)} />
+                <TaskRow ticket={task.ticketKey ?? '—'} title={task.title} repos={repoNames(task.repositoryIds)} progress={task.progress} pr={prBadge(task.id)} tone={st.tone} statusLabel={t(st.key)} index={i} selected={task.id === selected} onClick={() => setSelected(task.id === selected ? null : task.id)} />
                 {task.id === selected && selectedTask ? <TaskDetail task={selectedTask} /> : null}
               </div>
             );

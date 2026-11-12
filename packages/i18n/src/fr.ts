@@ -264,6 +264,10 @@ export const fr = {
   'pr.checks.failed': '{n} check(s) en échec',
   'pr.checks.pending': '{n} check(s) en cours',
   'pr.checks.passed': '{n} check(s) OK',
+  'pr.badge': 'PR {numbers}',
+  'pr.dependsOn': 'dépend de {numbers}',
+  'pr.syncedAgo': 'lue {ago}',
+  'home.openPullRequests': 'Pull requests ouvertes',
 
   'settings.title': 'Réglages',
   'settings.subtitle': 'Connectez, configurez et personnalisez votre environnement.',

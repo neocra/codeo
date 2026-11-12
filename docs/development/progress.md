@@ -4,6 +4,19 @@ _Updated: 2026-11-12_
 
 ## Current milestone: Phase 5 — review and pull requests (in progress)
 
+### Phase 5, step 3: pull request follow-up (done and verified)
+- Background refresh: every 2 minutes (`pullRequestRefreshMs`, `0` disables) the runtime re-reads every PR GitHub
+  can still change (draft/open/changes requested/approved) with the user's `gh`; nothing is asked while `gh` is
+  missing or logged out, one failing PR never stops the others, and `PullRequestUpdated` is only published when
+  something changed (status, checks, title, size, dependencies). The pass in flight is awaited at shutdown.
+- Cleanup after merge: once a PR is merged (background pass or manual refresh), its lane's worktree is removed
+  through the same guarded path as `worktrees.remove` — never forced: uncommitted work or an agent at work keeps
+  it, and it is retried on the next pass. The branch is always kept.
+- PR dependencies for parallel lanes: lanes are published in plan order; a lane whose subtask `dependsOn` other
+  subtasks gets their PRs in `dependsOn`, and a new PR's description lists them ("Dépend de :" + URLs).
+- Desktop: PR badge (`PR #12, #13`) on the task list, an "Open pull requests" card on Home (`home.summary`
+  `openPullRequests`), each PR row shows the PRs it depends on and when it was last read from GitHub.
+
 ### Phase 5, step 2: pull requests from reviewed tasks (done and verified)
 - `@codeo/git` `commitAll` (tracked + untracked, honours `.gitignore`, the repository's own identity and hooks),
   `commitsAhead`, `pushBranch` (`--set-upstream`, refspec `refs/heads/b:refs/heads/b`, never forced).
@@ -71,8 +84,8 @@ _Updated: 2026-11-12_
 
 ### Known limitations
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
-- Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); PR status and checks are refreshed on demand (no polling or webhooks yet); merging is done on GitHub; parallel lanes become independent PRs (`dependsOn` between PRs is not filled yet). The remote is always `origin`.
-- Worktrees: no automatic cleanup of old worktrees (not even after a PR is merged); removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees.
+- Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
+- Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
 - Review has no inline comments or "request changes" loop yet: to iterate, talk to the agent from its session while the task is in review.
 - Demo mode with the Elyndor / Codeo Cloud datasets: not yet implemented.
@@ -81,9 +94,20 @@ _Updated: 2026-11-12_
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
-1. PR follow-up (phase 5): periodic status/CI refresh, worktree cleanup once a PR is merged, PR dependencies for parallel lanes, PR badge on the task list / Home.
-2. Runtime relay client to the gateway + mobile pairing by QR (phase 6/7).
+1. Runtime relay client to the gateway + mobile pairing by QR (phase 6/7).
+2. Review loop (phase 5 follow-up): inline comments / "request changes" sent back to the agents.
 3. Demo mode dataset, clearly separated from live data.
+
+## Verification log — 2026-11-12 (phase 5, PR follow-up)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` (17 packages/apps) | clean |
+| `pnpm test` | 134 tests passed, 0 failed (runtime 29: merged winner's worktree removed and branch kept on refresh; parallel lanes published in plan order with `dependsOn` + "Dépend de" in the body; background pass quiet when nothing changed, announces changes, keeps a dirty merged lane and cleans it on a later pass without calling GitHub) |
+| `pnpm lint` | 0 errors |
+| `tsup` runtime bundle, `electron-vite build` | built |
+
+Not verified in this session: the poller against the real `gh` on a real PR, the Tasks badge and Home card clicked through in the running Electron app (typechecked and built only).
 
 ## Verification log — 2026-11-12 (phase 5, pull requests)
 
