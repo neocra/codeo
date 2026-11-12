@@ -89,6 +89,39 @@ export const SubtaskPlanSchema = z.object({
 });
 export type SubtaskPlan = z.infer<typeof SubtaskPlanSchema>;
 
+/** A worktree's changes against its base branch (commits + uncommitted work, untracked files included). */
+export const DiffLineSchema = z.object({
+  type: z.enum(['add', 'del', 'ctx']),
+  old: z.number().int().nullable(),
+  new: z.number().int().nullable(),
+  text: z.string(),
+});
+export const FileDiffSchema = z.object({
+  path: z.string(),
+  oldPath: z.string().nullable(),
+  status: z.enum(['added', 'deleted', 'modified', 'renamed']),
+  binary: z.boolean(),
+  additions: z.number().int(),
+  deletions: z.number().int(),
+  hunks: z.array(z.object({ header: z.string(), lines: z.array(DiffLineSchema) })),
+  truncated: z.boolean(),
+});
+export type FileDiff = z.infer<typeof FileDiffSchema>;
+export const WorktreeDiffSchema = z.object({
+  worktreeId: IdSchema,
+  branch: z.string(),
+  baseBranch: z.string(),
+  mergeBase: z.string(),
+  head: z.string(),
+  commits: z.number().int(),
+  uncommitted: z.boolean(),
+  files: z.array(FileDiffSchema),
+  additions: z.number().int(),
+  deletions: z.number().int(),
+  truncated: z.boolean(),
+});
+export type WorktreeDiff = z.infer<typeof WorktreeDiffSchema>;
+
 export const commands = {
   'runtime.info': define(z.object({}), RuntimeInfoSchema, 'read'),
 
@@ -165,6 +198,16 @@ export const commands = {
     z.object({ task: TaskSchema, sessions: z.array(AgentSessionSchema) }),
     'session:write',
   ),
+  /**
+   * Closes the human review: the task moves `review` → `completed` and its idle agents are released.
+   * Best-of-N requires the kept candidate (`winnerSubtaskId`, a completed subtask); other modes refuse one.
+   * Worktrees and branches are kept (the PR flow works from them).
+   */
+  'tasks.complete': define(
+    z.object({ taskId: IdSchema, winnerSubtaskId: IdSchema.optional() }),
+    TaskSchema,
+    'session:write',
+  ),
   'tasks.cancel': define(z.object({ taskId: IdSchema }), TaskSchema, 'session:write'),
   'tasks.pause': define(z.object({ taskId: IdSchema }), TaskSchema, 'session:write'),
   'tasks.resume': define(z.object({ taskId: IdSchema }), TaskSchema, 'session:write'),
@@ -174,6 +217,7 @@ export const commands = {
     z.array(WorktreeSchema),
     'read',
   ),
+  'worktrees.diff': define(z.object({ worktreeId: IdSchema }), WorktreeDiffSchema, 'read'),
   /** Removes a worktree directory (its branch is kept). Refused while dirty unless `force`, and while an agent works in it. */
   'worktrees.remove': define(
     z.object({ worktreeId: IdSchema, force: z.boolean().default(false) }),

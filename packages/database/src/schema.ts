@@ -54,6 +54,7 @@ export const tasks = sqliteTable(
     /** JSON array of Subtask */
     subtasks: text('subtasks').notNull().default('[]'),
     progress: integer('progress').notNull().default(0),
+    winnerSubtaskId: text('winner_subtask_id'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
     startedAt: text('started_at'),

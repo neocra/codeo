@@ -7,6 +7,8 @@ export type ThemePref = 'dark' | 'light' | 'system';
 interface UiState {
   screen: Screen;
   selectedSessionId: string | null;
+  /** Task shown by the Review screen; null picks the first task in review. */
+  reviewTaskId: string | null;
   workspaceId: string | null;
   locale: Locale;
   theme: ThemePref;
@@ -14,6 +16,7 @@ interface UiState {
   userName: string;
   navigate: (screen: Screen) => void;
   openSession: (id: string) => void;
+  openReview: (taskId: string | null) => void;
   setWorkspace: (id: string | null) => void;
   setLocale: (l: Locale) => void;
   setTheme: (t: ThemePref) => void;
@@ -25,6 +28,7 @@ interface UiState {
 export const useUi = create<UiState>((set) => ({
   screen: 'home',
   selectedSessionId: null,
+  reviewTaskId: null,
   workspaceId: null,
   locale: 'fr',
   theme: 'dark',
@@ -32,6 +36,7 @@ export const useUi = create<UiState>((set) => ({
   userName: '',
   navigate: (screen) => set({ screen }),
   openSession: (id) => set({ screen: 'sessions', selectedSessionId: id }),
+  openReview: (reviewTaskId) => set({ screen: 'review', reviewTaskId }),
   setWorkspace: (workspaceId) => set({ workspaceId }),
   setLocale: (locale) => set({ locale }),
   setTheme: (theme) => set({ theme }),
