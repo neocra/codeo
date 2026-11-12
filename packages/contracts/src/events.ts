@@ -9,6 +9,7 @@ import {
   WorkspaceSchema,
   WorktreeSchema,
 } from '@codeo/domain';
+import { RemoteStatusSchema } from './commands';
 
 const base = { id: z.string(), at: z.string() };
 
@@ -33,6 +34,7 @@ export const RuntimeEventSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('SessionEntryUpdated'), sessionId: z.string(), entry: SessionEntrySchema }),
   z.object({ ...base, type: z.literal('ApprovalRequested'), approval: ApprovalRequestSchema }),
   z.object({ ...base, type: z.literal('ApprovalResolved'), approval: ApprovalRequestSchema }),
+  z.object({ ...base, type: z.literal('RemoteStatusChanged'), status: RemoteStatusSchema }),
 ]);
 export type RuntimeEvent = z.infer<typeof RuntimeEventSchema>;
 export type RuntimeEventType = RuntimeEvent['type'];

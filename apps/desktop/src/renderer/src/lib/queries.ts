@@ -16,6 +16,8 @@ export const keys = {
   /** Under the task's worktrees key, so every task/worktree event that refreshes the lanes refreshes their diffs too. */
   pullRequests: (scope: { taskId?: string; workspaceId?: string | null }) => ['pullRequests', scope.taskId ?? scope.workspaceId ?? 'all'] as const,
   github: ['github'] as const,
+  remote: ['remote'] as const,
+  remoteDevices: ['remote', 'devices'] as const,
   worktreeDiff: (taskId: string, worktreeId: string) => ['worktrees', taskId, 'diff', worktreeId] as const,
   home: (workspaceId?: string | null) => ['home', workspaceId ?? 'default'] as const,
 };
@@ -35,6 +37,10 @@ export const useTaskPullRequests = (taskId: string) =>
 export const useWorkspacePullRequests = (workspaceId: string | null) =>
   useQuery({ queryKey: keys.pullRequests({ workspaceId }), queryFn: () => invoke('pullRequests.list', workspaceId ? { workspaceId } : {}) });
 export const useGitHubStatus = () => useQuery({ queryKey: keys.github, queryFn: () => invoke('github.status', {}), staleTime: 60_000 });
+export const useRemoteStatus = () => useQuery({ queryKey: keys.remote, queryFn: () => invoke('remote.status', {}) });
+/** The gateway does not tell the runtime when a phone pairs: poll faster while a pairing code is on screen. */
+export const useRemoteDevices = (enabled: boolean, pairing: boolean) =>
+  useQuery({ queryKey: keys.remoteDevices, queryFn: () => invoke('remote.devices', {}), enabled, refetchInterval: pairing ? 2_000 : 30_000 });
 export const useWorktreeDiff = (taskId: string, worktreeId: string) =>
   useQuery({ queryKey: keys.worktreeDiff(taskId, worktreeId), queryFn: () => invoke('worktrees.diff', { worktreeId }) });
 export const usePendingApprovals = () => useQuery({ queryKey: keys.approvals, queryFn: () => invoke('approvals.list', { status: 'pending' }) });
@@ -115,6 +121,10 @@ export function applyEvent(qc: QueryClient, event: RuntimeEvent): void {
       void qc.invalidateQueries({ queryKey: keys.approvals });
       void qc.invalidateQueries({ queryKey: ['home'] });
       void qc.invalidateQueries({ queryKey: ['sessions'] });
+      return;
+    case 'RemoteStatusChanged':
+      qc.setQueryData(keys.remote, event.status);
+      if (event.status.connection === 'connected') void qc.invalidateQueries({ queryKey: keys.remoteDevices });
       return;
     case 'RuntimeReady':
       void qc.invalidateQueries();

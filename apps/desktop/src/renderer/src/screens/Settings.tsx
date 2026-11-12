@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ProviderStatus } from '@codeo/domain';
 import { Banner, Button, Card, Choice, PageHeader, Placeholder, ProgressBar, StatusPill } from '@codeo/ui-desktop';
 import type { RuntimeStatus, UpdateStatus } from '../../../shared/bridge-types';
+import { RemoteAccess } from '../components/RemoteAccess';
 import { codeo, invoke } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { keys, useProviders } from '../lib/queries';
@@ -198,12 +199,6 @@ export function SettingsScreen() {
               </dd>
             </dl>
             <div className="cd-divider" />
-            <div className="cd-card__title" style={{ marginBottom: 8 }}>{t('settings.remote')}</div>
-            <div className="cd-row-gap">
-              <span className="cd-body-sm cd-muted">{t('settings.remote.placeholder')}</span>
-              <Placeholder>{t('placeholder.phase', { n: 6 })}</Placeholder>
-            </div>
-            <div className="cd-divider" />
             <div className="cd-card__title" style={{ marginBottom: 8 }}>{t('settings.demo')}</div>
             <div className="cd-row-gap">
               <span className="cd-body-sm cd-muted">{t('settings.demo.hint')}</span>
@@ -216,6 +211,9 @@ export function SettingsScreen() {
             </div>
           </Card>
         </div>
+        <Card title={t('settings.remote')} icon="shield">
+          <RemoteAccess />
+        </Card>
         <UpdatesCard />
       </div>
     </>

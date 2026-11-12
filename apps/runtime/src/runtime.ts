@@ -13,6 +13,7 @@ import { ApprovalService } from './services/approvals';
 import { ProviderRegistry } from './services/providers';
 import { laneKey, SessionService } from './services/sessions';
 import { PullRequestService } from './services/pull-requests';
+import { RemoteService, type RemoteServiceOptions } from './services/remote';
 import { TaskService } from './services/tasks';
 import { GhCliClient, type GitHubClient } from './github/gh-cli';
 import { WorkspaceService } from './services/workspaces';
@@ -32,6 +33,8 @@ export interface RuntimeOptions {
   github?: GitHubClient;
   /** How often open pull requests are re-read from the code host (ms). Default 2 minutes; `0` disables it. */
   pullRequestRefreshMs?: number;
+  /** Gateway access overrides (tests). */
+  remote?: RemoteServiceOptions;
 }
 
 export interface CallContext {
@@ -53,6 +56,7 @@ export interface Runtime {
     approvals: ApprovalService;
     worktrees: WorktreeService;
     pullRequests: PullRequestService;
+    remote: RemoteService;
   };
   /** Validates params, checks authorization, executes; returns a validated result. */
   call<C extends CommandName>(command: C, rawParams: unknown, ctx: CallContext): Promise<CommandResult<C>>;
@@ -90,6 +94,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   sessions.worktreeValidator = (worktreeId) => worktrees.assertIntact(worktreeId);
   const tasks = new TaskService(new TaskRepo(db.db), workspaces, sessions, worktrees, bus, log.child('tasks'));
   const pullRequests = new PullRequestService(new PullRequestRepo(db.db), tasks, worktrees, workspaces, opts.github ?? new GhCliClient(), bus, log.child('pull-requests'), worktreeLocks);
+  const remote = new RemoteService(settings, bus, log.child('remote'), { name: machine.name, platform: machine.platform }, opts.remote);
   await approvals.init();
   await sessions.init();
   await tasks.init();
@@ -197,7 +202,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'sessions.send': async (p) => sessions.send(p.sessionId, p.text),
     'sessions.cancel': async (p) => sessions.cancel(p.sessionId),
     'approvals.list': async (p) => approvals.list(p),
-    'approvals.resolve': async (p, ctx) => approvals.resolve(p.approvalId, p.decision, ctx.clientKind === 'mobile' ? 'mobile' : 'desktop', p.reason),
+    /* A decision relayed by the gateway comes from a paired phone. */
+    'approvals.resolve': async (p, ctx) => approvals.resolve(p.approvalId, p.decision, ctx.clientKind === 'mobile' || ctx.clientKind === 'gateway' ? 'mobile' : 'desktop', p.reason),
+    'remote.status': async () => remote.status(),
+    'remote.enable': async (p) => remote.enable(p.gatewayUrl),
+    'remote.disable': async () => remote.disable(),
+    'remote.pairingStart': async () => remote.startPairing(),
+    'remote.devices': async () => remote.devices(),
+    'remote.revokeDevice': async (p) => remote.revokeDevice(p.deviceId),
     'home.summary': async (p) => {
       const all = await workspaces.list();
       const workspace = (p.workspaceId ? all.find((w) => w.id === p.workspaceId) : all[0]) ?? null;
@@ -233,13 +245,16 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   }
 
   pullRequests.startWatching(opts.pullRequestRefreshMs ?? 120_000);
+  await remote.init({ info, bus, call });
 
   return {
     info,
     bus,
-    services: { providers, workspaces, sessions, tasks, approvals, worktrees, pullRequests },
+    services: { providers, workspaces, sessions, tasks, approvals, worktrees, pullRequests, remote },
     call,
     async shutdown() {
+      /* 0. phones stop reaching this runtime before anything else closes. */
+      await remote.shutdown();
       /* 1. the scheduler stops launching and finishes queued mutations; 2. agents are closed (their
          completion callbacks are drained again, now unable to launch); 3. nothing can start; 4. persist. */
       approvals.shutdown();

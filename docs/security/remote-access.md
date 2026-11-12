@@ -60,7 +60,7 @@ still holds unexpired tokens.
 
 ## 4. Protocol between the gateway and a runtime
 
-The runtime side (the "relay client", to be built in `apps/runtime`, phase 6) speaks the ordinary
+The runtime side (the relay client, `apps/runtime/src/remote/relay-client.ts`) speaks the ordinary
 runtime protocol over the outbound socket, playing the *server* role:
 
 1. Runtime dials `wss://<gateway>/v1/runtimes/<runtimeId>/connect` with `Authorization: Bearer <runtimeSecret>`.
@@ -83,8 +83,8 @@ runtime protocol over the outbound socket, playing the *server* role:
 - **TLS termination guidance and pinning.** Production deployments should terminate TLS at a reverse
   proxy with HSTS and forward `X-Forwarded-For` (`TRUST_PROXY=true`); in-process TLS is for single-host
   setups. Certificate pinning in the mobile app and in the runtime relay client is not implemented.
-- **Runtime relay client in `apps/runtime`.** The gateway side is complete; the runtime does not yet dial
-  out. Until then nothing reaches a real runtime through the gateway.
+- **Mobile side of pairing.** The runtime relay client (`apps/runtime/src/remote/`) and the desktop pairing UI exist;
+  the phone does not scan the QR code or speak to the gateway yet.
 - **Runtime identity end-to-end.** The phone trusts the gateway's statement of which runtime it talks
   to. The device `publicKey` accepted at pairing is stored but unused; a later phase should let the runtime
   sign its `welcome` with a key fingerprint shown during pairing, and let devices sign requests.
