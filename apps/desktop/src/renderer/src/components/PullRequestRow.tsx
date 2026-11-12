@@ -51,10 +51,13 @@ export function PullRequestRow({ pr, context, all = [] }: { pr: PullRequest; con
           <span style={{ color: 'var(--ink)' }}>#{pr.number} {pr.title}</span>
           {context ? ` · ${context}` : ''}
           <span className="cd-key"> · {pr.branch} → {pr.baseBranch}</span>
-          {deps.length ? <span className="cd-key"> · {t('pr.dependsOn', { numbers: prNumbers(deps) })}</span> : null}
         </span>
-        {pr.syncedAt ? <span className="cd-list-row__time">{t('pr.syncedAgo', { ago: formatRelative(t, pr.syncedAt) })}</span> : null}
-        {checks ? <StatusPill tone={checks.tone}>{t(checks.key, { n: checks.n })}</StatusPill> : <span className="cd-key">{t('pr.checks.none')}</span>}
+        {/* One grid cell (the row has four columns), outside the truncated title so the dependency stays readable. */}
+        <span className="cd-row-gap" style={{ whiteSpace: 'nowrap' }}>
+          {deps.length ? <span className="cd-key">{t('pr.dependsOn', { numbers: prNumbers(deps) })}</span> : null}
+          {pr.syncedAt ? <span className="cd-list-row__time">{t('pr.syncedAgo', { ago: formatRelative(t, pr.syncedAt) })}</span> : null}
+          {checks ? <StatusPill tone={checks.tone}>{t(checks.key, { n: checks.n })}</StatusPill> : <span className="cd-key">{t('pr.checks.none')}</span>}
+        </span>
         <span className="cd-row-gap">
           <Button variant="ghost" size="sm" icon="refresh" loading={refresh.isPending} onClick={() => refresh.mutate()}>
             {t('action.refresh')}
