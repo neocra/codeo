@@ -112,3 +112,27 @@ describe('worktrees', () => {
     ).rejects.toThrow(/Invalid branch/);
   });
 });
+
+describe('publishing a worktree branch', () => {
+  it('commits everything, counts the commits ahead and pushes the branch without forcing', async () => {
+    const { commitAll, commitsAhead, pushBranch } = await import('../src/index');
+    const remote = mkdtempSync(path.join(os.tmpdir(), 'codeo-remote-'));
+    await git(['init', '-q', '--bare', '-b', 'main'], { cwd: remote });
+    await git(['remote', 'add', 'pubremote', remote], { cwd: dir });
+    const wt = path.join(dir, '.worktrees', 'publish');
+    await createWorktree({ root: dir, path: wt, branch: 'codeo/publish', baseBranch: 'main' });
+    expect(await commitAll(wt, 'nothing')).toBeNull();
+    writeFileSync(path.join(wt, 'new.txt'), 'new\n');
+    writeFileSync(path.join(wt, 'README.md'), '# changed\n');
+    const sha = await commitAll(wt, 'PROJ-1: agent work');
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    expect((await git(['status', '--porcelain'], { cwd: wt })).stdout).toBe('');
+    expect(await commitsAhead(wt, 'main')).toBe(1);
+    await pushBranch(wt, 'codeo/publish', 'pubremote');
+    expect((await git(['rev-parse', 'refs/heads/codeo/publish'], { cwd: remote })).stdout.trim()).toBe(sha);
+    await expect(pushBranch(wt, '--force', 'pubremote')).rejects.toThrow(/Invalid branch/);
+    await removeWorktree(dir, wt, { force: true });
+    await git(['remote', 'remove', 'pubremote'], { cwd: dir });
+    rmSync(remote, { recursive: true, force: true });
+  });
+});

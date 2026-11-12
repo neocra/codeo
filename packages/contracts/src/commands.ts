@@ -10,6 +10,7 @@ import {
   MachineSchema,
   OrchestrationModeSchema,
   ProviderStatusSchema,
+  PullRequestSchema,
   SessionEntrySchema,
   TaskIsolationSchema,
   TaskSchema,
@@ -122,6 +123,14 @@ export const WorktreeDiffSchema = z.object({
 });
 export type WorktreeDiff = z.infer<typeof WorktreeDiffSchema>;
 
+export const GitHubStatusSchema = z.object({
+  installed: z.boolean(),
+  version: z.string().nullable(),
+  authenticated: z.boolean(),
+  detail: z.string().nullable(),
+});
+export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
+
 export const commands = {
   'runtime.info': define(z.object({}), RuntimeInfoSchema, 'read'),
 
@@ -224,6 +233,30 @@ export const commands = {
     z.object({ removed: z.boolean() }),
     'workspace:admin',
   ),
+
+  /** Whether the user's GitHub CLI is installed and logged in (pull requests are opened with it). */
+  'github.status': define(z.object({}), GitHubStatusSchema, 'read'),
+  'pullRequests.list': define(
+    z.object({ workspaceId: IdSchema.optional(), taskId: IdSchema.optional() }),
+    z.array(PullRequestSchema),
+    'read',
+  ),
+  /**
+   * Publishes a completed task: commits each kept worktree (Best-of-N: the winner's), pushes its branch (never
+   * forced) and opens a PR with `gh`, or adopts the one already open for the branch. `skipped`: worktrees with no work.
+   */
+  'pullRequests.create': define(
+    z.object({
+      taskId: IdSchema,
+      title: z.string().max(256).optional(),
+      body: z.string().max(60_000).optional(),
+      draft: z.boolean().default(false),
+    }),
+    z.object({ pullRequests: z.array(PullRequestSchema), skipped: z.array(IdSchema) }),
+    'workspace:admin',
+  ),
+  /** Re-reads a PR's status and CI checks from GitHub. */
+  'pullRequests.refresh': define(z.object({ pullRequestId: IdSchema }), PullRequestSchema, 'read'),
 
   'sessions.list': define(
     z.object({ workspaceId: IdSchema.optional(), taskId: IdSchema.optional() }),

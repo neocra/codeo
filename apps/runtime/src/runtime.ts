@@ -4,7 +4,7 @@ import { ClaudeCodeProvider } from '@codeo/agent-provider-claude-code';
 import { CodexProvider } from '@codeo/agent-provider-codex';
 import type { AgentProvider } from '@codeo/agent-provider-core';
 import { commands, localizedError, PROTOCOL_VERSION, RuntimeError, type CommandName, type CommandParsedParams, type CommandResult, type CommandScope, type RuntimeInfo } from '@codeo/contracts';
-import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, WorktreeRepo, type OpenedDatabase } from '@codeo/database';
+import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, WorktreeRepo, PullRequestRepo, type OpenedDatabase } from '@codeo/database';
 import type { Machine } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
 import { createLogger, KeyedLock, newId, type Logger } from '@codeo/shared-utils';
@@ -12,7 +12,9 @@ import { EventBus } from './event-bus';
 import { ApprovalService } from './services/approvals';
 import { ProviderRegistry } from './services/providers';
 import { laneKey, SessionService } from './services/sessions';
+import { PullRequestService } from './services/pull-requests';
 import { TaskService } from './services/tasks';
+import { GhCliClient, type GitHubClient } from './github/gh-cli';
 import { WorkspaceService } from './services/workspaces';
 import { WorktreeService } from './services/worktrees';
 import { RUNTIME_VERSION } from './version';
@@ -26,6 +28,8 @@ export interface RuntimeOptions {
   migrationsFolder?: string;
   /** Where agent worktrees are created. Defaults to `<dataDir>/worktrees` (a temp dir for in-memory runtimes). */
   worktreesDir?: string;
+  /** Code host used to open pull requests. Defaults to the user's `gh` CLI. */
+  github?: GitHubClient;
 }
 
 export interface CallContext {
@@ -46,6 +50,7 @@ export interface Runtime {
     tasks: TaskService;
     approvals: ApprovalService;
     worktrees: WorktreeService;
+    pullRequests: PullRequestService;
   };
   /** Validates params, checks authorization, executes; returns a validated result. */
   call<C extends CommandName>(command: C, rawParams: unknown, ctx: CallContext): Promise<CommandResult<C>>;
@@ -82,6 +87,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir, workspaceLocks);
   sessions.worktreeValidator = (worktreeId) => worktrees.assertIntact(worktreeId);
   const tasks = new TaskService(new TaskRepo(db.db), workspaces, sessions, worktrees, bus, log.child('tasks'));
+  const pullRequests = new PullRequestService(new PullRequestRepo(db.db), tasks, worktrees, workspaces, opts.github ?? new GhCliClient(), bus, log.child('pull-requests'), worktreeLocks);
   await approvals.init();
   await sessions.init();
   await tasks.init();
@@ -162,6 +168,10 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
         return { removed };
       });
     },
+    'github.status': async () => pullRequests.status(),
+    'pullRequests.list': async (p) => pullRequests.list(p),
+    'pullRequests.create': async (p) => pullRequests.create(p),
+    'pullRequests.refresh': async (p) => pullRequests.refresh(p.pullRequestId),
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),
     'sessions.start': async (p) => sessions.start(p),
@@ -205,7 +215,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   return {
     info,
     bus,
-    services: { providers, workspaces, sessions, tasks, approvals, worktrees },
+    services: { providers, workspaces, sessions, tasks, approvals, worktrees, pullRequests },
     call,
     async shutdown() {
       /* 1. the scheduler stops launching and finishes queued mutations; 2. agents are closed (their

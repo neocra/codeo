@@ -1,12 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { FileDiff } from '@codeo/contracts';
-import { orderedSubtasks, type Subtask, type Task, type Worktree } from '@codeo/domain';
-import { Banner, Button, Card, DiffView, EmptyState, Icon, PageHeader, Placeholder, StatusPill, Tabs, TaskRow, type DiffLine } from '@codeo/ui-desktop';
+import { orderedSubtasks, type CICheck, type PullRequest, type Subtask, type Task, type Worktree } from '@codeo/domain';
+import type { MessageKey } from '@codeo/i18n';
+import { Banner, Button, Card, Choice, DiffView, EmptyState, Field, Icon, Input, PageHeader, StatusPill, Tabs, TaskRow, Textarea, type DiffLine, type Tone } from '@codeo/ui-desktop';
 import { taskTone } from '../components/status';
-import { describeError, invoke } from '../lib/api';
+import { codeo, describeError, invoke } from '../lib/api';
 import { useT } from '../lib/i18n';
-import { useTasks, useWorkspaces, useWorktreeDiff, useWorktrees } from '../lib/queries';
+import { useGitHubStatus, useTaskPullRequests, useTasks, useWorkspacePullRequests, useWorkspaces, useWorktreeDiff, useWorktrees } from '../lib/queries';
 import { useUi } from '../lib/store';
 
 /** Files are expanded by default only while the whole diff stays readable at a glance. */
@@ -20,10 +21,13 @@ export function ReviewScreen() {
   const ws = useWorkspaces().data?.find((w) => w.id === workspaceId);
   const all = tasks.data ?? [];
   const inReview = all.filter((x) => x.status === 'review');
+  /* Completed tasks stay reachable so their pull request can be opened or followed. */
+  const completed = all.filter((x) => x.status === 'completed' && x.isolation === 'worktree').slice(0, 10);
   /* A task just completed from this screen stays visible so its outcome can be read. */
   const pinned = reviewTaskId ? all.find((x) => x.id === reviewTaskId) : undefined;
-  const list = pinned && !inReview.includes(pinned) ? [pinned, ...inReview] : inReview;
-  const selected = pinned ?? inReview[0] ?? null;
+  const open = pinned && !inReview.includes(pinned) && !completed.includes(pinned) ? [pinned, ...inReview] : inReview;
+  const list = [...open, ...completed.filter((x) => !open.includes(x))];
+  const selected = pinned ?? inReview[0] ?? list[0] ?? null;
   const repoNames = (ids: string[]) => (ws?.repositories ?? []).filter((r) => ids.includes(r.id)).map((r) => r.name);
 
   return (
@@ -53,6 +57,7 @@ export function ReviewScreen() {
       ) : (
         <EmptyState icon="review" title={t('review.empty')} body={t('review.empty.body')} />
       )}
+      <WorkspacePullRequests workspaceId={workspaceId} tasks={all} />
     </>
   );
 }
@@ -130,10 +135,141 @@ function TaskReview({ task }: { task: Task }) {
               {t('review.complete')}
             </Button>
           ) : null}
-          <span className="cd-body-sm cd-muted">
-            {t('review.pr')} <Placeholder>{t('placeholder.phase', { n: 5 })}</Placeholder>
-          </span>
+          {inReview && task.isolation === 'worktree' ? <span className="cd-body-sm cd-muted">{t('pr.afterReview')}</span> : null}
         </div>
+        {task.status === 'completed' && task.isolation === 'worktree' && lanes.length ? <PublishPanel task={task} /> : null}
+      </div>
+    </Card>
+  );
+}
+
+const PR_TONE: Record<PullRequest['status'], Tone> = {
+  draft: 'idle',
+  open: 'live',
+  changes_requested: 'attention',
+  approved: 'done',
+  merged: 'done',
+  closed: 'idle',
+};
+
+function checksSummary(checks: CICheck[]): { tone: Tone; key: MessageKey; n: number } | null {
+  if (!checks.length) return null;
+  const failed = checks.filter((c) => c.status === 'failure').length;
+  if (failed) return { tone: 'error', key: 'pr.checks.failed', n: failed };
+  const pending = checks.filter((c) => c.status === 'queued' || c.status === 'running').length;
+  if (pending) return { tone: 'waiting', key: 'pr.checks.pending', n: pending };
+  return { tone: 'done', key: 'pr.checks.passed', n: checks.length };
+}
+
+/** One pull request: number, status, CI summary, link to GitHub and a refresh from the code host. */
+function PullRequestRow({ pr, context }: { pr: PullRequest; context?: string | undefined }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const refresh = useMutation({
+    mutationFn: () => invoke('pullRequests.refresh', { pullRequestId: pr.id }),
+    onMutate: () => setError(null),
+    onError: (e) => setError(describeError(e, t)),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['pullRequests'] }),
+  });
+  const checks = checksSummary(pr.checks);
+  return (
+    <div className="cd-stack cd-stack--sm">
+      <div className="cd-list-row" style={{ cursor: 'default' }}>
+        <StatusPill tone={PR_TONE[pr.status]}>{t(`pr.status.${pr.status}`)}</StatusPill>
+        <span className="cd-list-row__title">
+          <span style={{ color: 'var(--ink)' }}>#{pr.number} {pr.title}</span>
+          {context ? ` · ${context}` : ''}
+          <span className="cd-key"> · {pr.branch} → {pr.baseBranch}</span>
+        </span>
+        {checks ? <StatusPill tone={checks.tone}>{t(checks.key, { n: checks.n })}</StatusPill> : <span className="cd-key">{t('pr.checks.none')}</span>}
+        <span className="cd-row-gap">
+          <Button variant="ghost" size="sm" icon="refresh" loading={refresh.isPending} onClick={() => refresh.mutate()}>
+            {t('action.refresh')}
+          </Button>
+          <Button variant="ghost" size="sm" icon="external" onClick={() => void codeo.openExternal(pr.url)}>
+            {t('pr.openOnGitHub')}
+          </Button>
+        </span>
+      </div>
+      {error ? <Banner tone="error">{error}</Banner> : null}
+    </div>
+  );
+}
+
+/** Completed task → pull request: commit the kept worktree(s), push the branch, open the PR with the user's gh. */
+function PublishPanel({ task }: { task: Task }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const prs = useTaskPullRequests(task.id);
+  const gh = useGitHubStatus();
+  const [title, setTitle] = useState(() => (task.ticketKey ? `${task.ticketKey}: ${task.title}` : task.title).slice(0, 72));
+  const [body, setBody] = useState(task.objective);
+  const [draft, setDraft] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState(0);
+  const publish = useMutation({
+    mutationFn: () => invoke('pullRequests.create', { taskId: task.id, title, body, draft }),
+    onMutate: () => {
+      setError(null);
+      setSkipped(0);
+    },
+    onSuccess: (r) => setSkipped(r.skipped.length),
+    onError: (e) => setError(describeError(e, t)),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['pullRequests'] });
+      void qc.invalidateQueries({ queryKey: ['worktrees', task.id] });
+    },
+  });
+  const existing = prs.data ?? [];
+  const ghProblem = gh.data && !gh.data.installed ? t('pr.ghMissing') : gh.data && !gh.data.authenticated ? t('pr.ghUnauthenticated') : null;
+
+  return (
+    <div className="cd-stack cd-stack--sm">
+      <div className="cd-overline">{t('pr.title')}</div>
+      {existing.map((pr) => (
+        <PullRequestRow key={pr.id} pr={pr} />
+      ))}
+      {ghProblem ? <Banner tone="warn">{ghProblem}</Banner> : null}
+      {!existing.length ? (
+        <>
+          <p className="cd-body-sm cd-muted" style={{ margin: 0 }}>
+            {task.orchestration === 'best-of-n' ? t('pr.explainWinner') : t('pr.explain')}
+          </p>
+          <Field label={t('pr.field.title')} htmlFor={`pr-title-${task.id}`}>
+            <Input id={`pr-title-${task.id}`} value={title} maxLength={256} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+          <Field label={t('pr.field.body')} htmlFor={`pr-body-${task.id}`}>
+            <Textarea id={`pr-body-${task.id}`} value={body} rows={4} onChange={(e) => setBody(e.target.value)} />
+          </Field>
+          <Choice type="checkbox" checked={draft} onChange={() => setDraft((d) => !d)} label={t('pr.field.draft')} />
+        </>
+      ) : null}
+      {skipped ? <Banner tone="info">{t('pr.skipped', { n: skipped })}</Banner> : null}
+      {error ? <Banner tone="error">{error}</Banner> : null}
+      <div className="cd-row-gap">
+        <Button variant="primary" size="sm" icon="branch" disabled={Boolean(ghProblem) || !title.trim()} loading={publish.isPending} onClick={() => publish.mutate()}>
+          {existing.length ? t('pr.update') : t('pr.create')}
+        </Button>
+        {existing.length ? <span className="cd-body-sm cd-muted">{t('pr.updateHint')}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Every pull request opened from this workspace's tasks, newest first. */
+function WorkspacePullRequests({ workspaceId, tasks }: { workspaceId: string | null; tasks: Task[] }) {
+  const t = useT();
+  const prs = useWorkspacePullRequests(workspaceId);
+  const list = prs.data ?? [];
+  if (!list.length) return null;
+  const taskTitle = (id: string | null) => tasks.find((x) => x.id === id)?.title;
+  return (
+    <Card title={t('pr.all')} icon="branch" count={list.length} style={{ marginTop: 24 }}>
+      <div className="cd-stack cd-stack--sm">
+        {list.map((pr) => (
+          <PullRequestRow key={pr.id} pr={pr} context={taskTitle(pr.taskId)} />
+        ))}
       </div>
     </Card>
   );
