@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { ApprovalCard, Button, StatusPill, Tabs, TaskRow } from '../src/index';
+import { ApprovalCard, Button, DiffView, StatusPill, Tabs, TaskRow, highlight } from '../src/index';
 
 describe('design components', () => {
   it('Button renders variants and loading state', () => {
@@ -33,5 +33,44 @@ describe('design components', () => {
     fireEvent.click(screen.getByRole('button', { name: /Approuver/ }));
     expect(onApprove).toHaveBeenCalled();
     expect(await screen.findByText('Approuvé', { selector: '.cd-done span' })).toBeInTheDocument();
+  });
+});
+
+describe('diff highlighting', () => {
+  const classes = (src: string) => {
+    const { container } = render(<div>{highlight(src)}</div>);
+    return { text: container.textContent, spans: [...container.querySelectorAll('span')].map((s) => [s.className, s.textContent]) };
+  };
+
+  it('colours keywords, functions, types, strings, numbers and comments, keeping the text intact', () => {
+    const src = "const total = sum(o, 'a\\'b', 12.5) + Order.x2 // fin";
+    const { text, spans } = classes(src);
+    expect(text).toBe(src);
+    expect(spans).toEqual([
+      ['syn-k', 'const'],
+      ['syn-f', 'sum'],
+      ['syn-s', "'a\\'b'"],
+      ['syn-n', '12.5'],
+      ['syn-t', 'Order'],
+      ['syn-c', '// fin'],
+    ]);
+  });
+
+  it('stays linear on inputs that made the old regex backtrack', () => {
+    for (const src of ['"' + '\\"'.repeat(50_000), "'" + "\\'".repeat(50_000), '//'.repeat(50_000), 'x'.repeat(100_000)]) {
+      const started = performance.now();
+      const { text } = classes(src);
+      expect(text).toBe(src);
+      expect(performance.now() - started).toBeLessThan(2000);
+    }
+  });
+
+  it('lets a numbered diff line be selected with the keyboard, but not a hunk header', () => {
+    const onLineSelect = vi.fn();
+    render(<DiffView file="a.ts" lines={[{ type: 'ctx', text: '@@ -1 +1 @@' }, { type: 'add', new: 1, text: 'x' }]} onLineSelect={onLineSelect} lineSelectLabel="Commenter" />);
+    const lines = screen.getAllByRole('button', { name: 'Commenter' });
+    expect(lines).toHaveLength(1);
+    fireEvent.keyDown(lines[0]!, { key: 'Enter' });
+    expect(onLineSelect).toHaveBeenCalledWith({ type: 'add', new: 1, text: 'x' }, 1);
   });
 });

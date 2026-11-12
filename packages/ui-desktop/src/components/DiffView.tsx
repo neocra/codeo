@@ -21,26 +21,72 @@ export interface DiffViewProps {
   renderAfterLine?: ((index: number) => ReactNode) | undefined;
 }
 
-const KW = /^(public|private|protected|internal|readonly|static|async|await|var|let|const|return|if|else|new|null|class|interface|using|namespace|void|string|int|bool|true|false|this|import|export|from|function|type)$/;
+const KEYWORDS = new Set(
+  'public private protected internal readonly static async await var let const return if else new null class interface using namespace void string int bool true false this import export from function type'.split(' '),
+);
+const isIdentStart = (c: string) => /[A-Za-z_$]/.test(c);
+const isIdentPart = (c: string) => /[A-Za-z0-9_$]/.test(c);
+const isDigit = (c: string) => c >= '0' && c <= '9';
 
+/**
+ * Light syntax colouring of one diff line. A single forward scan (no backtracking regex): every character is read
+ * once, so a long line of agent output cannot make rendering slow. An unterminated string colours the rest of the line.
+ */
 export function highlight(src: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\/\/.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_$][A-Za-z0-9_$]*)|(\s+|.)/g;
-  let m: RegExpExecArray | null;
+  let plain = '';
   let k = 0;
-  while ((m = re.exec(src))) {
-    const t = m[0];
-    let cls: string | null = null;
-    if (m[1]) cls = 'syn-c';
-    else if (m[2]) cls = 'syn-s';
-    else if (m[3]) cls = 'syn-n';
-    else if (m[4]) {
-      if (KW.test(t)) cls = 'syn-k';
-      else if (src.charAt(re.lastIndex) === '(') cls = 'syn-f';
-      else if (/^[A-Z]/.test(t)) cls = 'syn-t';
+  const push = (text: string, cls: string | null) => {
+    if (!cls) {
+      plain += text;
+      return;
     }
-    out.push(cls ? <span key={k++} className={cls}>{t}</span> : t);
+    if (plain) out.push(plain);
+    plain = '';
+    out.push(<span key={k++} className={cls}>{text}</span>);
+  };
+  let i = 0;
+  while (i < src.length) {
+    const c = src.charAt(i);
+    if (c === '/' && src.charAt(i + 1) === '/') {
+      push(src.slice(i), 'syn-c');
+      break;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < src.length && src.charAt(j) !== c) j += src.charAt(j) === '\\' ? 2 : 1;
+      const endAt = Math.min(j + 1, src.length);
+      push(src.slice(i, endAt), 'syn-s');
+      i = endAt;
+      continue;
+    }
+    /* A number starts a word (as `\b` did): digits inside identifiers stay part of them. */
+    if (isDigit(c) && !isIdentPart(src.charAt(i - 1))) {
+      let j = i;
+      while (isDigit(src.charAt(j))) j++;
+      if (src.charAt(j) === '.' && isDigit(src.charAt(j + 1))) {
+        j++;
+        while (isDigit(src.charAt(j))) j++;
+      }
+      if (!isIdentPart(src.charAt(j))) {
+        push(src.slice(i, j), 'syn-n');
+        i = j;
+        continue;
+      }
+    }
+    if (isIdentStart(c)) {
+      let j = i + 1;
+      while (j < src.length && isIdentPart(src.charAt(j))) j++;
+      const word = src.slice(i, j);
+      const cls = KEYWORDS.has(word) ? 'syn-k' : src.charAt(j) === '(' ? 'syn-f' : /^[A-Z]/.test(word) ? 'syn-t' : null;
+      push(word, cls);
+      i = j;
+      continue;
+    }
+    push(c, null);
+    i++;
   }
+  if (plain) out.push(plain);
   return out;
 }
 
