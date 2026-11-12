@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import type { Locale } from '@codeo/i18n';
@@ -23,16 +24,23 @@ function Row({ label, value, mono = true }: { label: string; value: string; mono
   );
 }
 
-/** Réglages: runtime connection, runtime info, profile, language, and the remote-access placeholder. */
+function formatDate(iso: string, locale: Locale): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Réglages: remote access (gateway pairing), direct runtime connection, runtime info, profile, language. */
 export default function MoreScreen() {
   const t = useT();
   const { theme } = useTheme();
-  const { state, error, configured } = useRuntime();
+  const { state, error, mode, runtimeOffline } = useRuntime();
   const settings = useSettings();
   const [url, setUrl] = useState(settings.url);
   const [token, setToken] = useState(settings.token);
   const [name, setName] = useState(settings.name);
   const [saving, setSaving] = useState(false);
+  const [confirmForget, setConfirmForget] = useState(false);
+  const paired = settings.gateway;
   const runtimeInfo = useCommand('runtime.info', {});
 
   useEffect(() => setUrl(settings.url), [settings.url]);
@@ -57,20 +65,84 @@ export default function MoreScreen() {
 
   return (
     <Screen title={t('settings.title')} subtitle={t('settings.subtitle')} trailing={<StatusPill tone={connectionTone(state)} label={connectionStateLabel(state, t)} />}>
+      <Section kicker={t('settings.remote')}>
+        <Card style={{ gap: theme.spacing['space-3'] }}>
+          {paired ? (
+            <>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.spacing['space-2'] }}>
+                <Typo variant="body-sm" color="ink-muted">
+                  {t('settings.connection.state')}
+                </Typo>
+                <StatusPill tone={connectionTone(state)} label={connectionStateLabel(state, t)} />
+              </View>
+              {state === 'unauthorized' ? (
+                <Typo variant="body-sm" color="coral">
+                  {t('mobile.unauthorized.body')}
+                </Typo>
+              ) : runtimeOffline ? (
+                <Typo variant="body-sm" color="ink-muted">
+                  {t('mobile.runtimeOffline')}
+                </Typo>
+              ) : null}
+              <View>
+                <Row label={t('settings.remote.gateway')} value={paired.gatewayUrl} />
+                <Divider />
+                <Row label={t('settings.remote.device')} value={paired.deviceName} mono={false} />
+                <Divider />
+                <Row label={t('settings.remote.pairedAt')} value={formatDate(paired.pairedAt, settings.locale)} mono={false} />
+              </View>
+              {confirmForget ? (
+                <Typo variant="body-sm" color="ink-muted">
+                  {t('settings.remote.forgetHint')}
+                </Typo>
+              ) : null}
+              <View style={{ gap: theme.spacing['space-2'] }}>
+                <Button
+                  variant={state === 'unauthorized' ? 'primary' : 'secondary'}
+                  label={t('settings.remote.repair')}
+                  onPress={() => router.push('/pair')}
+                />
+                <Button
+                  variant="ghost"
+                  label={confirmForget ? t('settings.remote.forgetConfirm') : t('settings.remote.forget')}
+                  onPress={() => {
+                    if (!confirmForget) {
+                      setConfirmForget(true);
+                      return;
+                    }
+                    setConfirmForget(false);
+                    void settings.clearGateway();
+                  }}
+                />
+              </View>
+            </>
+          ) : (
+            <>
+              <Typo variant="body-sm" color="ink-muted">
+                {t('settings.remote.hint')}
+              </Typo>
+              <Button variant="primary" icon="shield" label={t('settings.remote.pair')} onPress={() => router.push('/pair')} />
+            </>
+          )}
+        </Card>
+      </Section>
+
       <Section kicker={t('settings.connection')}>
         <Card style={{ gap: theme.spacing['space-4'] }}>
           <Typo variant="body-sm" color="ink-muted">
-            {t('settings.connection.hint')}
+            {mode === 'gateway' ? t('settings.remote.active') : t('settings.connection.hint')}
           </Typo>
           <Field label={t('settings.connection.url')} value={url} onChangeText={setUrl} placeholder="ws://127.0.0.1:52133" mono keyboardType="url" />
           <Field label={t('settings.connection.token')} value={token} onChangeText={setToken} mono secure />
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.spacing['space-2'] }}>
-            <Typo variant="body-sm" color="ink-muted">
-              {t('settings.connection.state')}
-            </Typo>
-            <StatusPill tone={connectionTone(state)} label={connectionStateLabel(state, t)} />
-          </View>
-          {error ? (
+          {mode === 'direct' ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.spacing['space-2'] }}>
+              <Typo variant="body-sm" color="ink-muted">
+                {t('settings.connection.state')}
+              </Typo>
+              <StatusPill tone={connectionTone(state)} label={connectionStateLabel(state, t)} />
+            </View>
+          ) : null}
+          {error && state !== 'connected' ? (
             <Typo variant="body-sm" color="coral">
               {error}
             </Typo>
@@ -84,7 +156,9 @@ export default function MoreScreen() {
               disabled={!dirty || url.trim().length === 0 || token.trim().length === 0}
               style={{ flex: 1 }}
             />
-            {configured ? <Button variant="ghost" label={t('settings.connection.forget')} onPress={() => void settings.clearConnection()} /> : null}
+            {settings.url.length > 0 || settings.token.length > 0 ? (
+              <Button variant="ghost" label={t('settings.connection.forget')} onPress={() => void settings.clearConnection()} />
+            ) : null}
           </View>
         </Card>
       </Section>
@@ -121,15 +195,6 @@ export default function MoreScreen() {
 
       <Section kicker={t('settings.language')}>
         <FilterPills options={localeOptions} value={settings.locale} onChange={(id) => void settings.setLocale(id)} />
-      </Section>
-
-      <Section kicker={t('settings.remote')}>
-        <Card compact style={{ gap: theme.spacing['space-2'] }}>
-          <StatusPill tone="idle" label={t('placeholder.phase', { n: 6 })} />
-          <Typo variant="body-sm" color="ink-muted">
-            {t('settings.remote.placeholder')}
-          </Typo>
-        </Card>
       </Section>
     </Screen>
   );

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useQuery, useQueryClient, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { CommandName, CommandParams, CommandResult, RuntimeEvent, RuntimeInfo } from '@codeo/contracts';
 import type { SessionEntry } from '@codeo/domain';
-import { RuntimeClient, type ConnectionState } from '@codeo/remote-client';
+import { CLOSE_RUNTIME_OFFLINE, GatewaySession, RuntimeClient, type ConnectionState } from '@codeo/remote-client';
 import { selectConfigured, useSettings } from './settings';
 
 export const APP_CLIENT = { name: 'codeo-remote', version: '0.1.0', kind: 'mobile' } as const;
@@ -16,6 +16,10 @@ export interface RuntimeContextValue {
   /** Last transport / protocol error, for the settings screen. */
   error: string | null;
   configured: boolean;
+  /** `gateway` once the phone is paired through a gateway, `direct` for a runtime URL + token. */
+  mode: 'gateway' | 'direct' | null;
+  /** The gateway is reachable but the desktop's runtime is not connected to it (close 4004). */
+  runtimeOffline: boolean;
 }
 
 const RuntimeContext = createContext<RuntimeContextValue | null>(null);
@@ -77,11 +81,49 @@ function bridgeEvent(queryClient: QueryClient, event: RuntimeEvent): void {
   }
 }
 
+let sharedSession: GatewaySession | null = null;
+
+/**
+ * One session per paired device for the life of the app. Refresh tokens rotate and a retired one presented
+ * again revokes the phone, so two sessions refreshing with the same token (an effect run twice, a remount)
+ * must never exist: the session's single-flight refresh only protects callers that share it.
+ */
+function gatewaySession(): GatewaySession {
+  const credentials = useSettings.getState().gateway;
+  if (!credentials) throw new Error('not paired');
+  const current = sharedSession?.credentials;
+  if (sharedSession && current?.deviceId === credentials.deviceId && current.gatewayUrl === credentials.gatewayUrl) return sharedSession;
+  sharedSession = new GatewaySession({
+    credentials,
+    onCredentials: (next) => useSettings.getState().setGateway(next),
+  });
+  return sharedSession;
+}
+
+/**
+ * A client that reaches the runtime through the gateway the phone was paired with. The access token is
+ * renewed before it expires, right away when the gateway closes the socket with 4003, and after repeated
+ * failed handshakes; a refused refresh (revoked phone) ends in the terminal `unauthorized` state.
+ */
+function gatewayClient(): RuntimeClient {
+  const session = gatewaySession();
+  return new RuntimeClient({
+    url: session.connectUrl,
+    token: (req) => session.accessToken({ force: req.rejected || req.failures >= 2 }),
+    bearerHeader: true,
+    client: APP_CLIENT,
+  });
+}
+
 export function RuntimeProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const url = useSettings((s) => s.url);
   const token = useSettings((s) => s.token);
   const configured = useSettings(selectConfigured);
+  /* Keyed by device, not by the credentials object: a token rotation must not rebuild the connection. */
+  const gatewayDevice = useSettings((s) => (s.gateway ? `${s.gateway.deviceId}@${s.gateway.gatewayUrl}` : null));
+  const mode = gatewayDevice !== null ? 'gateway' : configured ? 'direct' : null;
+  const [runtimeOffline, setRuntimeOffline] = useState(false);
   const [client, setClient] = useState<RuntimeClient | null>(null);
   const [state, setState] = useState<ConnectionState>('idle');
   const [info, setInfo] = useState<RuntimeInfo | null>(null);
@@ -93,16 +135,19 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
       setState('idle');
       setInfo(null);
       setError(null);
+      setRuntimeOffline(false);
       return;
     }
-    const next = new RuntimeClient({ url, token, client: APP_CLIENT });
+    const next = gatewayDevice !== null ? gatewayClient() : new RuntimeClient({ url, token, client: APP_CLIENT });
     const offState = next.on('state', (s) => {
       setState(s);
       if (s === 'connected') {
         setError(null);
+        setRuntimeOffline(false);
         void queryClient.invalidateQueries();
       }
     });
+    const offDisconnected = next.on('disconnected', ({ code }) => setRuntimeOffline(code === CLOSE_RUNTIME_OFFLINE));
     const offWelcome = next.on('welcome', ({ runtime }) => setInfo(runtime));
     const offError = next.on('error', (err) => setError(err.message));
     const offEvent = next.on('event', ({ event }) => bridgeEvent(queryClient, event));
@@ -114,14 +159,15 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
       offWelcome();
       offError();
       offEvent();
+      offDisconnected();
       next.close();
       queryClient.clear();
     };
-  }, [configured, url, token, queryClient]);
+  }, [configured, url, token, gatewayDevice, queryClient]);
 
   const value = useMemo<RuntimeContextValue>(
-    () => ({ client, state, info, error, configured }),
-    [client, state, info, error, configured],
+    () => ({ client, state, info, error, configured, mode, runtimeOffline }),
+    [client, state, info, error, configured, mode, runtimeOffline],
   );
   return <RuntimeContext.Provider value={value}>{children}</RuntimeContext.Provider>;
 }

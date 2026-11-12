@@ -10,7 +10,9 @@ import {
   type RuntimeInfo,
   type ServerMessage,
 } from '@codeo/contracts';
-import { Deferred, TypedEmitter } from '@codeo/shared-utils';
+/* Subpaths, not the barrel: the barrel pulls `node:crypto` (ids), which React Native cannot bundle. */
+import { Deferred } from '@codeo/shared-utils/deferred';
+import { TypedEmitter } from '@codeo/shared-utils/emitter';
 
 /** Minimal WebSocket surface shared by browsers, React Native and the `ws` package. */
 export interface WebSocketLike {
@@ -21,14 +23,36 @@ export interface WebSocketLike {
   onerror: ((ev?: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
 }
-export type WebSocketFactory = (url: string) => WebSocketLike;
+/** `init.headers` carries `Authorization` when `bearerHeader` is on (React Native and `ws` support it). */
+export type WebSocketFactory = (url: string, init: { headers: Record<string, string> }) => WebSocketLike;
 
-export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
+/**
+ * `unauthorized` is terminal: the credentials were refused for good (revoked phone, refresh token gone).
+ * Nothing reconnects until a new client is built with new credentials.
+ */
+export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'closed';
+
+/** Context handed to a token provider before each connection attempt. */
+export interface TokenRequest {
+  /** Attempts in a row that ended before `welcome`. */
+  failures: number;
+  /** The previous socket was closed with 4003 (credentials refused): the token should be renewed. */
+  rejected: boolean;
+}
+
+/** A token provider that throws an error with `fatal === true` moves the client to `unauthorized`. */
+export type TokenProvider = string | ((request: TokenRequest) => string | Promise<string>);
+
+/** Close codes the gateway uses towards devices (`apps/gateway/src/relay.ts`). */
+export const CLOSE_UNAUTHORIZED = 4003;
+export const CLOSE_RUNTIME_OFFLINE = 4004;
 
 export interface RuntimeClientOptions {
   url: string;
-  token: string;
+  token: TokenProvider;
   client: { name: string; version: string; kind: 'desktop' | 'mobile' | 'gateway' | 'cli' | 'test' };
+  /** Also send the token as `Authorization: Bearer` on the upgrade request (required by the gateway). */
+  bearerHeader?: boolean;
   createWebSocket?: WebSocketFactory;
   requestTimeoutMs?: number;
   reconnect?: boolean;
@@ -40,8 +64,24 @@ interface ClientEvents extends Record<string, unknown> {
   state: ConnectionState;
   event: { seq: number; event: RuntimeEvent };
   welcome: { runtime: RuntimeInfo; lastSeq: number; scopes: string[] };
+  /** The socket closed; `code`/`reason` as sent by the peer when known (4004 = runtime offline behind a gateway). */
+  disconnected: { code: number | null; reason: string };
   error: Error;
 }
+
+function isFatal(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'fatal' in err && (err as { fatal: unknown }).fatal === true;
+}
+
+function closeInfo(ev: unknown): { code: number | null; reason: string } {
+  if (typeof ev !== 'object' || ev === null) return { code: null, reason: '' };
+  const { code, reason } = ev as { code?: unknown; reason?: unknown };
+  return { code: typeof code === 'number' ? code : null, reason: typeof reason === 'string' ? reason : '' };
+}
+
+/* Browsers ignore the third argument; React Native reads `headers` from it. */
+type HeaderWebSocketCtor = new (url: string, protocols: undefined, options: { headers: Record<string, string> }) => WebSocketLike;
+const defaultFactory: WebSocketFactory = (url, init) => new (WebSocket as unknown as HeaderWebSocketCtor)(url, undefined, init);
 
 /**
  * Typed client for the Codeo runtime protocol. Tracks the last event sequence so a
@@ -56,6 +96,9 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
   private reconnectDelay = 500;
   private hello = new Deferred<void>();
   private closedByUser = false;
+  private failures = 0;
+  private rejected = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   runtime: RuntimeInfo | null = null;
   scopes: string[] = [];
 
@@ -77,16 +120,45 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
 
   connect(): Promise<void> {
     this.closedByUser = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.setState(this._state === 'idle' ? 'connecting' : 'reconnecting');
-    const factory = this.opts.createWebSocket ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
-    const ws = factory(this.opts.url);
-    this.ws = ws;
     this.hello = new Deferred<void>();
+    const hello = this.hello;
+    void this.open(hello);
+    return hello.promise;
+  }
+
+  private async open(hello: Deferred<void>): Promise<void> {
+    let token: string;
+    try {
+      const provider = this.opts.token;
+      token = typeof provider === 'string' ? provider : await provider({ failures: this.failures, rejected: this.rejected });
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.emit('error', error);
+      if (!hello.settled) hello.reject(error);
+      if (isFatal(err)) {
+        this.setState('unauthorized');
+        return;
+      }
+      this.failures++;
+      this.scheduleReconnect();
+      return;
+    }
+    if (this.closedByUser) {
+      if (!hello.settled) hello.reject(new RuntimeError('INTERNAL', 'connection closed'));
+      return;
+    }
+    this.rejected = false;
+    const factory = this.opts.createWebSocket ?? defaultFactory;
+    const ws = factory(this.opts.url, { headers: this.opts.bearerHeader ? { Authorization: `Bearer ${token}` } : {} });
+    this.ws = ws;
     ws.onopen = () => {
       const msg: ClientMessage = {
         kind: 'hello',
         protocolVersion: PROTOCOL_VERSION,
-        token: this.opts.token,
+        token,
         client: this.opts.client,
         afterSeq: this._lastSeq > 0 || this.opts.replayFromStart ? this._lastSeq : -1,
       };
@@ -96,26 +168,41 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
     ws.onerror = () => {
       /* onclose follows */
     };
-    ws.onclose = () => {
-      this.ws = null;
+    ws.onclose = (ev) => {
+      if (this.ws === ws) this.ws = null;
+      const info = closeInfo(ev);
       for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
         p.d.reject(new RuntimeError('INTERNAL', 'connection closed'));
         this.pending.delete(id);
       }
-      if (!this.hello.settled) this.hello.reject(new RuntimeError('INTERNAL', 'connection closed before welcome'));
+      if (!hello.settled) {
+        this.failures++;
+        hello.reject(new RuntimeError('INTERNAL', 'connection closed before welcome'));
+      }
+      if (info.code === CLOSE_UNAUTHORIZED) this.rejected = true;
+      this.emit('disconnected', info);
       if (this.closedByUser || this.opts.reconnect === false) {
-        this.setState('closed');
+        if (this._state !== 'unauthorized') this.setState('closed');
         return;
       }
-      this.setState('reconnecting');
-      const delay = this.reconnectDelay;
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000);
-      setTimeout(() => {
-        if (!this.closedByUser) this.connect().catch(() => undefined);
-      }, delay);
+      this.scheduleReconnect();
     };
-    return this.hello.promise;
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closedByUser || this.opts.reconnect === false) {
+      this.setState('closed');
+      return;
+    }
+    this.setState('reconnecting');
+    /* A refused token is renewed right away; anything else backs off. */
+    const delay = this.rejected ? 0 : this.reconnectDelay;
+    if (!this.rejected) this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.closedByUser) this.connect().catch(() => undefined);
+    }, delay);
   }
 
   private handle(raw: string) {
@@ -131,6 +218,7 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
         this.runtime = msg.runtime;
         this.scopes = msg.scopes;
         this.reconnectDelay = 500;
+        this.failures = 0;
         this.setState('connected');
         this.emit('welcome', { runtime: msg.runtime, lastSeq: msg.lastSeq, scopes: msg.scopes });
         this.hello.resolve();
@@ -172,6 +260,8 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
 
   close(): void {
     this.closedByUser = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.ws?.close();
     this.ws = null;
     this.setState('closed');

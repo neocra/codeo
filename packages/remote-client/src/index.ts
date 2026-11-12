@@ -1,1 +1,28 @@
-export { RuntimeClient, type RuntimeClientOptions, type ConnectionState, type WebSocketLike, type WebSocketFactory } from './client';
+export {
+  RuntimeClient,
+  CLOSE_RUNTIME_OFFLINE,
+  CLOSE_UNAUTHORIZED,
+  type RuntimeClientOptions,
+  type ConnectionState,
+  type TokenProvider,
+  type TokenRequest,
+  type WebSocketLike,
+  type WebSocketFactory,
+} from './client';
+export {
+  GatewayClientError,
+  GatewayCredentialsSchema,
+  GatewaySession,
+  PairingQrSchema,
+  completePairing,
+  deviceConnectUrl,
+  normalizeGatewayUrl,
+  parsePairingQr,
+  refreshCredentials,
+  type CompletePairingInput,
+  type FetchLike,
+  type GatewayCredentials,
+  type GatewayErrorCode,
+  type GatewaySessionOptions,
+  type PairingQr,
+} from './gateway';

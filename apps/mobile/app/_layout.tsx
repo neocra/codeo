@@ -47,6 +47,7 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: dark.colors['bg-000'] } }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="session/[id]" />
+            <Stack.Screen name="pair" />
           </Stack>
         </RuntimeProvider>
       </ThemeProvider>

@@ -89,6 +89,7 @@ export function connectionTone(state: ConnectionState): PillTone {
     case 'reconnecting':
       return 'waiting';
     case 'closed':
+    case 'unauthorized':
       return 'error';
     case 'idle':
       return 'idle';
