@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { FileDiff } from '@codeo/contracts';
-import { orderedSubtasks, type CICheck, type PullRequest, type Subtask, type Task, type Worktree } from '@codeo/domain';
-import type { MessageKey } from '@codeo/i18n';
-import { Banner, Button, Card, Choice, DiffView, EmptyState, Field, Icon, Input, PageHeader, StatusPill, Tabs, TaskRow, Textarea, type DiffLine, type Tone } from '@codeo/ui-desktop';
+import { orderedSubtasks, type Subtask, type Task, type Worktree } from '@codeo/domain';
+import { Banner, Button, Card, Choice, DiffView, EmptyState, Field, Icon, Input, PageHeader, StatusPill, Tabs, TaskRow, Textarea, type DiffLine } from '@codeo/ui-desktop';
+import { PullRequestRow } from '../components/PullRequestRow';
 import { taskTone } from '../components/status';
-import { codeo, describeError, invoke } from '../lib/api';
+import { describeError, invoke } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { useGitHubStatus, useTaskPullRequests, useTasks, useWorkspacePullRequests, useWorkspaces, useWorktreeDiff, useWorktrees } from '../lib/queries';
 import { useUi } from '../lib/store';
@@ -143,60 +143,6 @@ function TaskReview({ task }: { task: Task }) {
   );
 }
 
-const PR_TONE: Record<PullRequest['status'], Tone> = {
-  draft: 'idle',
-  open: 'live',
-  changes_requested: 'attention',
-  approved: 'done',
-  merged: 'done',
-  closed: 'idle',
-};
-
-function checksSummary(checks: CICheck[]): { tone: Tone; key: MessageKey; n: number } | null {
-  if (!checks.length) return null;
-  const failed = checks.filter((c) => c.status === 'failure').length;
-  if (failed) return { tone: 'error', key: 'pr.checks.failed', n: failed };
-  const pending = checks.filter((c) => c.status === 'queued' || c.status === 'running').length;
-  if (pending) return { tone: 'waiting', key: 'pr.checks.pending', n: pending };
-  return { tone: 'done', key: 'pr.checks.passed', n: checks.length };
-}
-
-/** One pull request: number, status, CI summary, link to GitHub and a refresh from the code host. */
-function PullRequestRow({ pr, context }: { pr: PullRequest; context?: string | undefined }) {
-  const t = useT();
-  const qc = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
-  const refresh = useMutation({
-    mutationFn: () => invoke('pullRequests.refresh', { pullRequestId: pr.id }),
-    onMutate: () => setError(null),
-    onError: (e) => setError(describeError(e, t)),
-    onSettled: () => void qc.invalidateQueries({ queryKey: ['pullRequests'] }),
-  });
-  const checks = checksSummary(pr.checks);
-  return (
-    <div className="cd-stack cd-stack--sm">
-      <div className="cd-list-row" style={{ cursor: 'default' }}>
-        <StatusPill tone={PR_TONE[pr.status]}>{t(`pr.status.${pr.status}`)}</StatusPill>
-        <span className="cd-list-row__title">
-          <span style={{ color: 'var(--ink)' }}>#{pr.number} {pr.title}</span>
-          {context ? ` · ${context}` : ''}
-          <span className="cd-key"> · {pr.branch} → {pr.baseBranch}</span>
-        </span>
-        {checks ? <StatusPill tone={checks.tone}>{t(checks.key, { n: checks.n })}</StatusPill> : <span className="cd-key">{t('pr.checks.none')}</span>}
-        <span className="cd-row-gap">
-          <Button variant="ghost" size="sm" icon="refresh" loading={refresh.isPending} onClick={() => refresh.mutate()}>
-            {t('action.refresh')}
-          </Button>
-          <Button variant="ghost" size="sm" icon="external" onClick={() => void codeo.openExternal(pr.url)}>
-            {t('pr.openOnGitHub')}
-          </Button>
-        </span>
-      </div>
-      {error ? <Banner tone="error">{error}</Banner> : null}
-    </div>
-  );
-}
-
 /** Completed task → pull request: commit the kept worktree(s), push the branch, open the PR with the user's gh. */
 function PublishPanel({ task }: { task: Task }) {
   const t = useT();
@@ -228,7 +174,7 @@ function PublishPanel({ task }: { task: Task }) {
     <div className="cd-stack cd-stack--sm">
       <div className="cd-overline">{t('pr.title')}</div>
       {existing.map((pr) => (
-        <PullRequestRow key={pr.id} pr={pr} />
+        <PullRequestRow key={pr.id} pr={pr} all={prs.data ?? []} />
       ))}
       {ghProblem ? <Banner tone="warn">{ghProblem}</Banner> : null}
       {!existing.length ? (
@@ -268,7 +214,7 @@ function WorkspacePullRequests({ workspaceId, tasks }: { workspaceId: string | n
     <Card title={t('pr.all')} icon="branch" count={list.length} style={{ marginTop: 24 }}>
       <div className="cd-stack cd-stack--sm">
         {list.map((pr) => (
-          <PullRequestRow key={pr.id} pr={pr} context={taskTitle(pr.taskId)} />
+          <PullRequestRow key={pr.id} pr={pr} context={taskTitle(pr.taskId)} all={list} />
         ))}
       </div>
     </Card>

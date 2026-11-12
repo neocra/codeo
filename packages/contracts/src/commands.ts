@@ -74,6 +74,8 @@ export const HomeSummarySchema = z.object({
   pendingApprovals: z.array(ApprovalRequestSchema),
   activeTasks: z.array(TaskSchema),
   recentFailures: z.array(AgentSessionSchema),
+  /** Pull requests GitHub can still change (not merged or closed), newest first. */
+  openPullRequests: z.array(PullRequestSchema).default([]),
 });
 export type HomeSummary = z.infer<typeof HomeSummarySchema>;
 

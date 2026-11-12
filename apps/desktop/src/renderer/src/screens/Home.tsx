@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AgentCard, Button, Card, EmptyState, Icon, Overline, PageHeader, ProgressBar, RepoChip, StatusPill } from '@codeo/ui-desktop';
 import { ApprovalItem } from '../components/ApprovalItem';
+import { PullRequestRow } from '../components/PullRequestRow';
 import { providerName, sessionTone, taskTone } from '../components/status';
 import { CreateTaskDialog } from '../components/CreateTaskDialog';
 import { formatRelative, useT } from '../lib/i18n';
@@ -149,6 +150,16 @@ export function HomeScreen() {
           </div>
         </Card>
       </div>
+
+      {(data?.openPullRequests ?? []).length ? (
+        <Card title={t('home.openPullRequests')} icon="branch" count={data!.openPullRequests.length} style={{ marginTop: 24 }} action={{ label: t('home.seeAll'), onClick: () => navigate('review') }}>
+          <div className="cd-stack cd-stack--sm">
+            {data!.openPullRequests.map((pr) => (
+              <PullRequestRow key={pr.id} pr={pr} all={data!.openPullRequests} />
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       <Card title={t('home.recentSessions')} icon="session" style={{ marginTop: 24 }} action={{ label: t('home.seeAll'), onClick: () => navigate('sessions') }}>
         {(data?.recentSessions ?? []).length ? (

@@ -110,7 +110,7 @@ beforeAll(async () => {
   writeFileSync(path.join(repoDir, 'a.txt'), 'a');
   await git(['add', '.'], { cwd: repoDir });
   await git(['commit', '-q', '-m', 'init'], { cwd: repoDir });
-  runtime = await createRuntime({ dataDir: ':memory:', worktreesDir, providers: [fake], github, logger: createLogger({ level: 'error' }) });
+  runtime = await createRuntime({ dataDir: ':memory:', worktreesDir, providers: [fake], github, pullRequestRefreshMs: 0, logger: createLogger({ level: 'error' }) });
   await runtime.services.providers.detectAll();
   server = await startServer({ runtime, token: TOKEN, logger: createLogger({ level: 'error' }) });
   client = new RuntimeClient({ url: `ws://127.0.0.1:${server.port}`, token: TOKEN, client: { name: 'test', version: '0', kind: 'test' }, createWebSocket: (u) => new WebSocket(u) as never, reconnect: false });
@@ -404,6 +404,14 @@ describe('orchestration and worktrees', () => {
       const refreshed = await client.request('pullRequests.refresh', { pullRequestId: pr!.id });
       expect(refreshed).toMatchObject({ status: 'merged', checks: [{ name: 'ci', status: 'success', url: null }] });
       expect(await client.request('pullRequests.list', { taskId: task.id })).toHaveLength(1);
+      /* Merged: the clean winner's worktree is removed, its branch kept; the unpublished candidate is untouched. */
+      const after = await client.request('worktrees.list', { taskId: task.id });
+      expect(after.map((w) => w.id)).not.toContain(kept.id);
+      expect(after).toHaveLength(1);
+      expect(existsSync(kept.path)).toBe(false);
+      await expect(git(['show-ref', '--verify', `refs/heads/${kept.branch}`], { cwd: repoDir })).resolves.toBeTruthy();
+      /* Refreshing again still works from the repository itself. */
+      expect((await client.request('pullRequests.refresh', { pullRequestId: pr!.id })).status).toBe('merged');
 
       /* A completed task whose agents changed nothing has nothing to publish. */
       const empty = await client.request('tasks.create', { workspaceId: await wsId(), title: 'Rien', provider: 'claude-code' });
@@ -414,6 +422,82 @@ describe('orchestration and worktrees', () => {
       expect(nothing.pullRequests).toEqual([]);
       expect(nothing.skipped).toHaveLength(1);
       expect(github.created).toHaveLength(1);
+    } finally {
+      await git(['remote', 'remove', 'origin'], { cwd: repoDir });
+      cleanupDir(remote);
+    }
+  });
+
+  it('links parallel lanes\u2019 pull requests to their dependencies and follows them in the background', async () => {
+    const remote = mkdtempSync(path.join(os.tmpdir(), 'codeo-origin-'));
+    await git(['init', '-q', '--bare', '-b', 'main'], { cwd: remote });
+    await git(['remote', 'add', 'origin', remote], { cwd: repoDir });
+    try {
+      const task = await client.request('tasks.create', {
+        workspaceId: await wsId(), title: 'Lots', provider: 'claude-code', orchestration: 'parallel',
+        subtasks: [agent({ title: 'API' }), agent({ title: 'UI', dependsOn: [0] })],
+      });
+      await client.request('tasks.start', { taskId: task.id });
+      await waitTask(task.id, 'review');
+      const planned = await client.request('tasks.get', { taskId: task.id });
+      const [api, ui] = [planned.subtasks.find((x) => x.title === 'API')!, planned.subtasks.find((x) => x.title === 'UI')!];
+      const lanes = await client.request('worktrees.list', { taskId: task.id });
+      const apiLane = lanes.find((w) => w.subtaskId === api.id)!;
+      const uiLane = lanes.find((w) => w.subtaskId === ui.id)!;
+      writeFileSync(path.join(apiLane.path, 'API.md'), 'api\n');
+      writeFileSync(path.join(uiLane.path, 'UI.md'), 'ui\n');
+      await client.request('tasks.complete', { taskId: task.id });
+
+      const createdBefore = github.created.length;
+      const { pullRequests } = await client.request('pullRequests.create', { taskId: task.id });
+      const apiPr = pullRequests.find((p) => p.worktreeId === apiLane.id)!;
+      const uiPr = pullRequests.find((p) => p.worktreeId === uiLane.id)!;
+      expect(apiPr.dependsOn).toEqual([]);
+      expect(uiPr.dependsOn).toEqual([apiPr.id]);
+      /* The dependency is opened first and named in the dependent PR's description. */
+      const opened = github.created.slice(createdBefore);
+      expect(opened.map((c) => c.head)).toEqual([apiLane.branch, uiLane.branch]);
+      expect(opened[1]!.body).toContain(`Dépend de :\n- ${apiPr.url}`);
+      expect(opened[0]!.body).not.toContain('Dépend de');
+
+      /* Background pass: unchanged PRs are re-read quietly, a change is announced. */
+      const seen: string[] = [];
+      await runtime.bus.flush();
+      const off = runtime.bus.on('event', ({ event: e }) => {
+        if (e.type === 'PullRequestUpdated') seen.push(e.pullRequest.id);
+      });
+      try {
+        const quiet = await runtime.services.pullRequests.refreshActive();
+        expect(quiet.failed).toBe(0);
+        expect(quiet.refreshed).toBeGreaterThanOrEqual(2);
+        await runtime.bus.flush();
+        expect(seen).toEqual([]);
+
+        /* The API PR is merged on GitHub while the UI lane still has uncommitted work. */
+        github.prs.set(apiPr.url, { ...github.prs.get(apiPr.url)!, status: 'merged' });
+        github.prs.set(uiPr.url, { ...github.prs.get(uiPr.url)!, status: 'merged' });
+        writeFileSync(path.join(uiLane.path, 'WIP.md'), 'pas fini\n');
+        const pass = await runtime.services.pullRequests.refreshActive();
+        expect(pass.cleaned).toBe(1);
+        await runtime.bus.flush();
+        expect(seen).toEqual(expect.arrayContaining([apiPr.id, uiPr.id]));
+        const left = await client.request('worktrees.list', { taskId: task.id });
+        expect(left.map((w) => w.id)).toEqual([uiLane.id]);
+        expect(existsSync(path.join(uiLane.path, 'WIP.md'))).toBe(true);
+        expect((await client.request('pullRequests.list', { taskId: task.id })).every((p) => p.status === 'merged')).toBe(true);
+
+        /* Once the work is committed, the next pass cleans the remaining lane up without asking GitHub again. */
+        github.authenticated = false;
+        await git(['add', '-A'], { cwd: uiLane.path });
+        await git(['commit', '-q', '-m', 'wip'], { cwd: uiLane.path });
+        expect((await runtime.services.pullRequests.refreshActive()).cleaned).toBe(1);
+        expect(await client.request('worktrees.list', { taskId: task.id })).toEqual([]);
+      } finally {
+        off();
+        github.authenticated = true;
+      }
+      const home = await client.request('home.summary', {});
+      expect(home.openPullRequests.map((p) => p.id)).not.toContain(apiPr.id);
     } finally {
       await git(['remote', 'remove', 'origin'], { cwd: repoDir });
       cleanupDir(remote);
@@ -576,14 +660,14 @@ describe('worktree recovery', () => {
 describe('shutdown', () => {
   it('leaves tasks in review untouched when their idle agents disconnect', { timeout: 60_000 }, async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'codeo-rt2-'));
-    const rt = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false });
+    const rt = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false, pullRequestRefreshMs: 0 });
     await rt.services.providers.detectAll();
     const ws = await rt.services.workspaces.create({ name: 'w', type: 'monorepo', description: '', repositoryPaths: [repoDir] });
     const task = await rt.services.tasks.create({ workspaceId: ws.id, title: 'Revue', objective: '', ticketKey: null, repositoryIds: [], provider: 'claude-code', role: 'developer', model: null, orchestration: 'single', isolation: 'worktree', subtasks: [] });
     await rt.services.tasks.start(task.id);
     await waitFor(async () => (await rt.services.tasks.get(task.id)).status === 'review');
     await rt.shutdown();
-    const reopened = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false });
+    const reopened = await createRuntime({ dataDir: dir, worktreesDir: path.join(dir, 'wt'), providers: [new FakeProvider()], logger: createLogger({ level: 'error' }), detectProviders: false, pullRequestRefreshMs: 0 });
     expect((await reopened.services.tasks.get(task.id)).status).toBe('review');
     /* Removing the reviewed worktree after the restart closes its disconnected owner cleanly: no failure anywhere. */
     const [wt] = await reopened.services.worktrees.list({ taskId: task.id });

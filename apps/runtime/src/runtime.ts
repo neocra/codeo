@@ -30,6 +30,8 @@ export interface RuntimeOptions {
   worktreesDir?: string;
   /** Code host used to open pull requests. Defaults to the user's `gh` CLI. */
   github?: GitHubClient;
+  /** How often open pull requests are re-read from the code host (ms). Default 2 minutes; `0` disables it. */
+  pullRequestRefreshMs?: number;
 }
 
 export interface CallContext {
@@ -115,6 +117,46 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     }
   }
 
+  /**
+   * Removes a lane's worktree under its directory lock: refused while one of its agents works, idle agents are
+   * suspended until git actually removed the directory, then closed. A dirty worktree needs `force`.
+   */
+  async function removeWorktreeGuarded(worktreeId: string, force: boolean): Promise<boolean> {
+    const target = await worktrees.get(worktreeId);
+    /* Same lock as session launch/send into this directory (keyed by path: a recreated lane keeps it). */
+    return worktreeLocks.run(laneKey(target.path), async () => {
+      const wt = await worktrees.get(worktreeId);
+      /* Every session of this directory is affected (a previous attempt may have suspended some); only the live ones can be busy. */
+      const associated = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => s.worktreeId === wt.id || laneKey(s.cwd) === laneKey(wt.path));
+      const owners = associated.filter((s) => sessions.isLive(s.id));
+      if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
+        throw localizedError('CONFLICT', 'worktree.agentBusy', undefined, 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
+      }
+      /* Idle owners are only suspended (provider closed, status kept) until git has actually removed the directory. */
+      const removed = await worktrees.remove(worktreeId, {
+        force,
+        beforeRemove: async () => {
+          for (const s of owners) await sessions.suspendUnlocked(s.id);
+        },
+      });
+      const terminal = new Set(['completed', 'failed', 'cancelled']);
+      for (const s of associated) {
+        if (!terminal.has(s.status)) await sessions.closeSuspendedUnlocked(s.id, { key: 'worktreeRemoved', text: 'Session fermée : le worktree a été supprimé.' });
+      }
+      return removed;
+    });
+  }
+
+  /* A merged PR's lane is cleaned up the same guarded way, never forced: uncommitted work keeps it. */
+  pullRequests.cleanupMergedLane = async (worktreeId) => {
+    try {
+      await removeWorktreeGuarded(worktreeId, false);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
+
   const handlers: Handlers = {
     'runtime.info': async () => info,
     'providers.list': async ({ refresh }) => (refresh || providers.list().length === 0 ? providers.detectAll() : providers.list()),
@@ -143,31 +185,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'tasks.resume': async (p) => tasks.resume(p.taskId),
     'worktrees.list': async (p) => worktrees.list(p),
     'worktrees.diff': async (p) => worktrees.diff(p.worktreeId),
-    'worktrees.remove': async (p) => {
-      const target = await worktrees.get(p.worktreeId);
-      /* Same lock as session launch/send into this directory (keyed by path: a recreated lane keeps it). */
-      return worktreeLocks.run(laneKey(target.path), async () => {
-        const wt = await worktrees.get(p.worktreeId);
-        /* Every session of this directory is affected (a previous attempt may have suspended some); only the live ones can be busy. */
-        const associated = (await sessions.list({ workspaceId: wt.workspaceId })).filter((s) => s.worktreeId === wt.id || laneKey(s.cwd) === laneKey(wt.path));
-        const owners = associated.filter((s) => sessions.isLive(s.id));
-        if (owners.some((s) => s.status === 'running' || s.status === 'waiting_approval')) {
-          throw localizedError('CONFLICT', 'worktree.agentBusy', undefined, 'Un agent travaille encore dans ce worktree : arrêtez-le d’abord.');
-        }
-        /* Idle owners are only suspended (provider closed, status kept) until git has actually removed the directory. */
-        const removed = await worktrees.remove(p.worktreeId, {
-          force: p.force,
-          beforeRemove: async () => {
-            for (const s of owners) await sessions.suspendUnlocked(s.id);
-          },
-        });
-        const terminal = new Set(['completed', 'failed', 'cancelled']);
-        for (const s of associated) {
-          if (!terminal.has(s.status)) await sessions.closeSuspendedUnlocked(s.id, { key: 'worktreeRemoved', text: 'Session fermée : le worktree a été supprimé.' });
-        }
-        return { removed };
-      });
-    },
+    'worktrees.remove': async (p) => ({ removed: await removeWorktreeGuarded(p.worktreeId, p.force) }),
     'github.status': async () => pullRequests.status(),
     'pullRequests.list': async (p) => pullRequests.list(p),
     'pullRequests.create': async (p) => pullRequests.create(p),
@@ -191,6 +209,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
         recentSessions: sessionsList.slice(0, 8),
         pendingApprovals: await approvals.list({ status: 'pending', ...(wsId ? { workspaceId: wsId } : {}) }),
         activeTasks: taskList.filter((t) => !['completed', 'cancelled', 'draft'].includes(t.status)),
+        openPullRequests: (await pullRequests.list(wsId ? { workspaceId: wsId } : {})).filter((pr) => pr.status !== 'merged' && pr.status !== 'closed'),
         recentFailures: sessionsList.filter((s) => s.status === 'failed').slice(0, 3),
       };
     },
@@ -212,6 +231,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     return validated.data as CommandResult<C>;
   }
 
+  pullRequests.startWatching(opts.pullRequestRefreshMs ?? 120_000);
+
   return {
     info,
     bus,
@@ -221,6 +242,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
       /* 1. the scheduler stops launching and finishes queued mutations; 2. agents are closed (their
          completion callbacks are drained again, now unable to launch); 3. nothing can start; 4. persist. */
       approvals.shutdown();
+      await pullRequests.stopWatching();
       await tasks.drain();
       await sessions.shutdown();
       await tasks.drain();
