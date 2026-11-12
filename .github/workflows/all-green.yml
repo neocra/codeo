@@ -1,0 +1,41 @@
+name: All Green
+
+# Copy of neocra/workflows/.github/workflows/all-green.yml: this repository is public and
+# cannot call a reusable workflow from that private repository, so it keeps its own copy.
+#
+# Single required status check: succeeds only when every job the caller
+# listed in `needs` succeeded. A reusable workflow cannot read the caller's
+# `needs` context, so the caller passes it as JSON:
+#
+#   all-green:
+#     if: ${{ always() }}
+#     needs: [build, tests, quality]
+#     uses: ./.github/workflows/all-green.yml
+#     with:
+#       needs: ${{ toJSON(needs) }}
+
+on:
+  workflow_call:
+    inputs:
+      needs:
+        required: true
+        type: string
+        description: 'The caller''s needs context, serialized with toJSON(needs)'
+
+permissions: {}
+
+jobs:
+  all-green:
+    name: All Green
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate required jobs
+        env:
+          NEEDS_JSON: ${{ inputs.needs }}
+        shell: bash
+        run: |
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS_JSON" | jq -e '
+            length > 0 and
+            all(.[]; .result == "success")
+          '
