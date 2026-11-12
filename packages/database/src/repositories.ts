@@ -12,6 +12,8 @@ import {
   type Workspace,
   type Worktree,
   WorktreeSchema,
+  PullRequestSchema,
+  type PullRequest,
 } from '@codeo/domain';
 import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from './client';
@@ -290,5 +292,41 @@ export class SettingsRepo {
   async set(key: string, value: unknown): Promise<void> {
     const v = { key, value: json(value), updatedAt: new Date().toISOString() };
     await this.db.insert(s.settings).values(v).onConflictDoUpdate({ target: s.settings.key, set: v });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/** Pull requests opened from task worktrees; one row per code-host PR (unique URL). */
+export class PullRequestRepo {
+  constructor(private db: Database) {}
+  private hydrate(row: typeof s.pullRequests.$inferSelect): PullRequest {
+    return PullRequestSchema.parse({ ...row, checks: parse(row.checks, []), dependsOn: parse(row.dependsOn, []) });
+  }
+  async list(filter: { workspaceId?: string | undefined; taskId?: string | undefined } = {}): Promise<PullRequest[]> {
+    const conds = [];
+    if (filter.workspaceId) conds.push(eq(s.pullRequests.workspaceId, filter.workspaceId));
+    if (filter.taskId) conds.push(eq(s.pullRequests.taskId, filter.taskId));
+    const rows = await this.db
+      .select()
+      .from(s.pullRequests)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(s.pullRequests.createdAt));
+    return rows.map((r) => this.hydrate(r));
+  }
+  async get(id: string): Promise<PullRequest | null> {
+    const row = (await this.db.select().from(s.pullRequests).where(eq(s.pullRequests.id, id)))[0];
+    return row ? this.hydrate(row) : null;
+  }
+  async findByWorktree(worktreeId: string): Promise<PullRequest | null> {
+    const row = (await this.db.select().from(s.pullRequests).where(eq(s.pullRequests.worktreeId, worktreeId)).orderBy(desc(s.pullRequests.createdAt)))[0];
+    return row ? this.hydrate(row) : null;
+  }
+  async findByUrl(url: string): Promise<PullRequest | null> {
+    const row = (await this.db.select().from(s.pullRequests).where(eq(s.pullRequests.url, url)))[0];
+    return row ? this.hydrate(row) : null;
+  }
+  async upsert(pr: PullRequest): Promise<void> {
+    const values = { ...pr, checks: json(pr.checks), dependsOn: json(pr.dependsOn) };
+    await this.db.insert(s.pullRequests).values(values).onConflictDoUpdate({ target: s.pullRequests.id, set: values });
   }
 }

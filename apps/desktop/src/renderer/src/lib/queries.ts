@@ -14,6 +14,8 @@ export const keys = {
   approvals: ['approvals', 'pending'] as const,
   worktrees: (taskId: string) => ['worktrees', taskId] as const,
   /** Under the task's worktrees key, so every task/worktree event that refreshes the lanes refreshes their diffs too. */
+  pullRequests: (scope: { taskId?: string; workspaceId?: string | null }) => ['pullRequests', scope.taskId ?? scope.workspaceId ?? 'all'] as const,
+  github: ['github'] as const,
   worktreeDiff: (taskId: string, worktreeId: string) => ['worktrees', taskId, 'diff', worktreeId] as const,
   home: (workspaceId?: string | null) => ['home', workspaceId ?? 'default'] as const,
 };
@@ -28,6 +30,11 @@ export const useSession = (id: string | null) =>
   useQuery({ queryKey: keys.session(id ?? ''), queryFn: () => invoke('sessions.get', { sessionId: id! }), enabled: Boolean(id) });
 export const useWorktrees = (taskId: string | null) =>
   useQuery({ queryKey: keys.worktrees(taskId ?? ''), queryFn: () => invoke('worktrees.list', { taskId: taskId! }), enabled: Boolean(taskId) });
+export const useTaskPullRequests = (taskId: string) =>
+  useQuery({ queryKey: keys.pullRequests({ taskId }), queryFn: () => invoke('pullRequests.list', { taskId }) });
+export const useWorkspacePullRequests = (workspaceId: string | null) =>
+  useQuery({ queryKey: keys.pullRequests({ workspaceId }), queryFn: () => invoke('pullRequests.list', workspaceId ? { workspaceId } : {}) });
+export const useGitHubStatus = () => useQuery({ queryKey: keys.github, queryFn: () => invoke('github.status', {}), staleTime: 60_000 });
 export const useWorktreeDiff = (taskId: string, worktreeId: string) =>
   useQuery({ queryKey: keys.worktreeDiff(taskId, worktreeId), queryFn: () => invoke('worktrees.diff', { worktreeId }) });
 export const usePendingApprovals = () => useQuery({ queryKey: keys.approvals, queryFn: () => invoke('approvals.list', { status: 'pending' }) });
@@ -72,6 +79,12 @@ export function applyEvent(qc: QueryClient, event: RuntimeEvent): void {
     case 'WorktreeCreated':
     case 'WorktreeRemoved':
       void qc.invalidateQueries({ queryKey: ['worktrees'] });
+      return;
+    case 'PullRequestCreated':
+    case 'PullRequestUpdated':
+      void qc.invalidateQueries({ queryKey: ['pullRequests'] });
+      /* Publishing commits the worktree: its diff now shows commits instead of uncommitted work. */
+      if (event.pullRequest.taskId) void qc.invalidateQueries({ queryKey: ['worktrees', event.pullRequest.taskId] });
       return;
     case 'SessionCreated':
     case 'SessionUpdated':

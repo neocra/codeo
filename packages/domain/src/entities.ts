@@ -350,21 +350,23 @@ export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
 /* ------------------------------------------------------------------ */
 /* Pull requests / CI                                                   */
 /* ------------------------------------------------------------------ */
+/** A CI check as the code host reports it (GitHub check runs and commit statuses alike). */
 export const CICheckSchema = z.object({
-  id: IdSchema,
-  pullRequestId: IdSchema,
   name: z.string(),
-  status: z.enum(['queued', 'running', 'success', 'failure', 'cancelled']),
+  status: z.enum(['queued', 'running', 'success', 'failure', 'cancelled', 'skipped']),
   url: z.string().nullable().default(null),
-  updatedAt: IsoDateSchema,
 });
 export type CICheck = z.infer<typeof CICheckSchema>;
 
 export const PullRequestStatusSchema = z.enum(['draft', 'open', 'changes_requested', 'approved', 'merged', 'closed']);
+export type PullRequestStatus = z.infer<typeof PullRequestStatusSchema>;
+/** A pull request opened from a task's worktree branch. Status and checks are a snapshot of the code host, refreshed on demand. */
 export const PullRequestSchema = z.object({
   id: IdSchema,
+  workspaceId: IdSchema,
   repositoryId: IdSchema,
   taskId: IdSchema.nullable().default(null),
+  worktreeId: IdSchema.nullable().default(null),
   ticketId: IdSchema.nullable().default(null),
   number: z.number().int(),
   title: z.string(),
@@ -378,6 +380,8 @@ export const PullRequestSchema = z.object({
   dependsOn: z.array(IdSchema).default([]),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
+  /** Last time status and checks were read from the code host. */
+  syncedAt: IsoDateSchema.nullable().default(null),
 });
 export type PullRequest = z.infer<typeof PullRequestSchema>;
 

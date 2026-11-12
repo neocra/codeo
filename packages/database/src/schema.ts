@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const machines = sqliteTable('machines', {
   id: text('id').primaryKey(),
@@ -140,6 +140,38 @@ export const worktrees = sqliteTable(
     createdAt: text('created_at').notNull(),
   },
   (t) => [index('worktrees_task_idx').on(t.taskId), index('worktrees_workspace_idx').on(t.workspaceId)],
+);
+
+export const pullRequests = sqliteTable(
+  'pull_requests',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    repositoryId: text('repository_id').notNull(),
+    taskId: text('task_id'),
+    worktreeId: text('worktree_id'),
+    ticketId: text('ticket_id'),
+    number: integer('number').notNull(),
+    title: text('title').notNull(),
+    branch: text('branch').notNull(),
+    baseBranch: text('base_branch').notNull(),
+    url: text('url').notNull(),
+    status: text('status').notNull(),
+    additions: integer('additions').notNull().default(0),
+    deletions: integer('deletions').notNull().default(0),
+    /** JSON array of CICheck */
+    checks: text('checks').notNull().default('[]'),
+    /** JSON array of pull request ids */
+    dependsOn: text('depends_on').notNull().default('[]'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    syncedAt: text('synced_at'),
+  },
+  (t) => [
+    index('pull_requests_task_idx').on(t.taskId),
+    index('pull_requests_workspace_idx').on(t.workspaceId),
+    uniqueIndex('pull_requests_url_idx').on(t.url),
+  ],
 );
 
 /** Persistent, append-only event log used for UI sync, remote replay and audit. */

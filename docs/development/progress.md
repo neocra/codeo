@@ -4,6 +4,22 @@ _Updated: 2026-11-12_
 
 ## Current milestone: Phase 5 — review and pull requests (in progress)
 
+### Phase 5, step 2: pull requests from reviewed tasks (done and verified)
+- `@codeo/git` `commitAll` (tracked + untracked, honours `.gitignore`, the repository's own identity and hooks),
+  `commitsAhead`, `pushBranch` (`--set-upstream`, refspec `refs/heads/b:refs/heads/b`, never forced).
+- GitHub through the user's own `gh` CLI (`apps/runtime/src/github/gh-cli.ts`, `execFile`, prompts disabled):
+  `status`, `findByBranch`, `create`, `view`; `gh pr view --json` is validated with zod and mapped to the domain
+  (draft/open/approved/changes requested/merged/closed; check runs and commit statuses → `CICheck`).
+- Commands `github.status` (read), `pullRequests.create` (`workspace:admin`), `pullRequests.list`,
+  `pullRequests.refresh` (read); events `PullRequestCreated` / `PullRequestUpdated`; table `pull_requests`
+  (migration 0004, unique URL). Only a `completed` task is published; Best-of-N publishes the winner's worktree
+  only; each lane is committed → pushed → PR opened (or the PR already open for the branch is adopted) under
+  the worktree lock. Re-running is idempotent and publishes later work on the same PR; lanes without work are
+  reported as `skipped`. Missing or logged-out `gh` is reported as such before anything is committed.
+- Desktop Review screen: completed tasks stay listed; "Create the pull request" (title, description, draft)
+  replaces the placeholder; each PR shows status, CI summary, refresh and "Open on GitHub"; a workspace-wide
+  "Pull requests" card lists every PR.
+
 ### Phase 5, step 1: review on real worktree diffs (done and verified)
 - `@codeo/git` `worktreeChanges(dir, base)`: everything a worktree changed since its merge base with the base
   branch — its commits **and** its uncommitted work, untracked files included — computed through a throwaway
@@ -54,8 +70,9 @@ _Updated: 2026-11-12_
 - Mobile foundation (Expo) and Gateway skeleton (see their READMEs).
 
 ### Known limitations
-- Tickets (Jira/GitHub), Review (diffs from worktrees/PRs), Pull Requests, Plugins: phase 5/8 — screens exist as labelled placeholders.
-- Worktrees: agents' changes stay uncommitted in the worktree; they can be reviewed and the task completed, but nothing commits, pushes or merges them yet (PR creation is the next step). No automatic cleanup of old worktrees; removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees.
+- Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
+- Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); PR status and checks are refreshed on demand (no polling or webhooks yet); merging is done on GitHub; parallel lanes become independent PRs (`dependsOn` between PRs is not filled yet). The remote is always `origin`.
+- Worktrees: no automatic cleanup of old worktrees (not even after a PR is merged); removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees.
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
 - Review has no inline comments or "request changes" loop yet: to iterate, talk to the agent from its session while the task is in review.
 - Demo mode with the Elyndor / Codeo Cloud datasets: not yet implemented.
@@ -64,9 +81,21 @@ _Updated: 2026-11-12_
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
-1. PR creation from a reviewed task (commit the winning/shared worktree, push its `codeo/…` branch, open the PR via `gh`), PR status on the task, Pull Requests screen (phase 5).
+1. PR follow-up (phase 5): periodic status/CI refresh, worktree cleanup once a PR is merged, PR dependencies for parallel lanes, PR badge on the task list / Home.
 2. Runtime relay client to the gateway + mobile pairing by QR (phase 6/7).
 3. Demo mode dataset, clearly separated from live data.
+
+## Verification log — 2026-11-12 (phase 5, pull requests)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` (17 packages/apps) | clean |
+| `pnpm test` | 133 tests passed, 0 failed (git 14 incl. commit + push to a bare remote; runtime 28 incl. `gh` output mapping and end-to-end Best-of-N → complete → PR: only the winner committed and pushed to a real bare `origin`, unauthenticated `gh` refused, re-run updates the same PR, refresh to merged, empty task skipped) |
+| `pnpm lint` | 0 errors |
+| `tsup` runtime bundle, `electron-vite build` | built; `dist/migrations` contains `0004_pull_requests.sql` |
+| Real `gh` 2.97.0, read-only | `status` → installed + authenticated; `view` of neocra/codeo#11 → `merged`, 7 checks mapped; `findByBranch` finds it |
+
+Not verified in this session: creating a real PR on GitHub (end-to-end uses a recording double for `gh`; nothing was published), the Review/PR panel clicked through in the running Electron app (typechecked and built only).
 
 ## Verification log — 2026-11-12 (phase 5, review)
 

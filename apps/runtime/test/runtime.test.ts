@@ -10,6 +10,7 @@ import { startServer, type RuntimeServer } from '../src/server/ws-server';
 import { RuntimeClient } from '@codeo/remote-client';
 import { createLogger } from '@codeo/shared-utils';
 import WebSocket from 'ws';
+import type { GitHubClient, RemotePullRequest } from '../src/github/gh-cli';
 
 /** A deterministic fake provider: NOT a stand-in for real integrations, only for exercising runtime logic. */
 class FakeProvider implements AgentProvider {
@@ -60,6 +61,31 @@ class FakeProvider implements AgentProvider {
   }
 }
 
+/** Records what the runtime asks of the code host; NOT a GitHub integration, only a test double for the gh client. */
+class FakeGitHub implements GitHubClient {
+  authenticated = true;
+  prs = new Map<string, RemotePullRequest>();
+  created: { cwd: string; base: string; head: string; title: string; body: string; draft: boolean }[] = [];
+  async status() {
+    return { installed: true, version: '0.0.0', authenticated: this.authenticated, detail: null };
+  }
+  async findByBranch(_cwd: string, branch: string) {
+    return [...this.prs.values()].find((p) => p.branch === branch) ?? null;
+  }
+  async create(cwd: string, input: { base: string; head: string; title: string; body: string; draft: boolean }) {
+    this.created.push({ cwd, ...input });
+    const number = this.created.length;
+    const pr: RemotePullRequest = { number, url: `https://github.example/acme/app/pull/${number}`, title: input.title, branch: input.head, baseBranch: input.base, status: input.draft ? 'draft' : 'open', additions: 1, deletions: 0, checks: [{ name: 'ci', status: 'queued', url: null }] };
+    this.prs.set(pr.url, pr);
+    return pr;
+  }
+  async view(_cwd: string, url: string) {
+    const pr = this.prs.get(url);
+    if (!pr) throw new Error(`no PR ${url}`);
+    return pr;
+  }
+}
+
 function makeGate() {
   let open!: () => void;
   const promise = new Promise<void>((r) => (open = r));
@@ -69,6 +95,7 @@ function makeGate() {
 let repoDir: string;
 let worktreesDir: string;
 const fake = new FakeProvider();
+const github = new FakeGitHub();
 let runtime: Runtime;
 let server: RuntimeServer;
 let client: RuntimeClient;
@@ -83,7 +110,7 @@ beforeAll(async () => {
   writeFileSync(path.join(repoDir, 'a.txt'), 'a');
   await git(['add', '.'], { cwd: repoDir });
   await git(['commit', '-q', '-m', 'init'], { cwd: repoDir });
-  runtime = await createRuntime({ dataDir: ':memory:', worktreesDir, providers: [fake], logger: createLogger({ level: 'error' }) });
+  runtime = await createRuntime({ dataDir: ':memory:', worktreesDir, providers: [fake], github, logger: createLogger({ level: 'error' }) });
   await runtime.services.providers.detectAll();
   server = await startServer({ runtime, token: TOKEN, logger: createLogger({ level: 'error' }) });
   client = new RuntimeClient({ url: `ws://127.0.0.1:${server.port}`, token: TOKEN, client: { name: 'test', version: '0', kind: 'test' }, createWebSocket: (u) => new WebSocket(u) as never, reconnect: false });
@@ -328,6 +355,69 @@ describe('orchestration and worktrees', () => {
     expect(done.winnerSubtaskId).toBe(third!.id);
     expect((await client.request('tasks.get', { taskId: task.id })).winnerSubtaskId).toBe(third!.id);
     expect(first!.status).toBe('completed');
+  });
+
+  it('publishes the kept best-of-n candidate as a pull request: commit, push, open, then adopt and refresh', async () => {
+    const remote = mkdtempSync(path.join(os.tmpdir(), 'codeo-origin-'));
+    await git(['init', '-q', '--bare', '-b', 'main'], { cwd: remote });
+    await git(['remote', 'add', 'origin', remote], { cwd: repoDir });
+    try {
+      const task = await client.request('tasks.create', {
+        workspaceId: await wsId(), title: 'Publier', ticketKey: 'PROJ-9', objective: 'Ajouter la note', provider: 'claude-code', orchestration: 'best-of-n',
+        subtasks: [agent({ title: 'Essai A' }), agent({ title: 'Essai B' })],
+      });
+      await client.request('tasks.start', { taskId: task.id });
+      await waitTask(task.id, 'review');
+      await expect(client.request('pullRequests.create', { taskId: task.id })).rejects.toThrow(/Validez la revue/);
+      const reviewed = await client.request('tasks.get', { taskId: task.id });
+      const winner = reviewed.subtasks[1]!;
+      const lanes = await client.request('worktrees.list', { taskId: task.id });
+      const kept = lanes.find((w) => w.id === winner.worktreeId)!;
+      writeFileSync(path.join(kept.path, 'NOTE.md'), 'agent B\n');
+      writeFileSync(path.join(lanes.find((w) => w.id !== kept.id)!.path, 'LOSER.md'), 'agent A\n');
+      await client.request('tasks.complete', { taskId: task.id, winnerSubtaskId: winner.id });
+
+      github.authenticated = false;
+      await expect(client.request('pullRequests.create', { taskId: task.id })).rejects.toThrow(/gh auth login/);
+      github.authenticated = true;
+
+      const { pullRequests: [pr], skipped } = await client.request('pullRequests.create', { taskId: task.id, draft: true });
+      expect(skipped).toEqual([]);
+      expect(pr).toMatchObject({ taskId: task.id, worktreeId: kept.id, branch: kept.branch, baseBranch: 'main', status: 'draft', number: 1 });
+      expect(github.created).toHaveLength(1);
+      expect(github.created[0]).toMatchObject({ cwd: kept.path, base: 'main', head: kept.branch, title: 'PROJ-9: Publier', draft: true });
+      expect(github.created[0]!.body).toContain('Ajouter la note');
+      /* The winner's work is committed and pushed; the losing candidate is not published. */
+      expect((await git(['status', '--porcelain'], { cwd: kept.path })).stdout).toBe('');
+      expect((await git(['show', `refs/heads/${kept.branch}:NOTE.md`], { cwd: remote })).stdout).toBe('agent B\n');
+      expect((await git(['log', '-1', '--format=%s', `refs/heads/${kept.branch}`], { cwd: remote })).stdout.trim()).toBe('PROJ-9: Publier');
+      expect((await git(['for-each-ref', '--format=%(refname)', 'refs/heads/'], { cwd: remote })).stdout.trim().split('\n')).toEqual([`refs/heads/${kept.branch}`]);
+
+      /* Re-running publishes new work on the same PR instead of opening another one. */
+      writeFileSync(path.join(kept.path, 'NOTE.md'), 'agent B, v2\n');
+      const again = await client.request('pullRequests.create', { taskId: task.id });
+      expect(again.pullRequests[0]?.id).toBe(pr!.id);
+      expect(github.created).toHaveLength(1);
+      expect((await git(['show', `refs/heads/${kept.branch}:NOTE.md`], { cwd: remote })).stdout).toBe('agent B, v2\n');
+
+      github.prs.set(pr!.url, { ...github.prs.get(pr!.url)!, status: 'merged', checks: [{ name: 'ci', status: 'success', url: null }] });
+      const refreshed = await client.request('pullRequests.refresh', { pullRequestId: pr!.id });
+      expect(refreshed).toMatchObject({ status: 'merged', checks: [{ name: 'ci', status: 'success', url: null }] });
+      expect(await client.request('pullRequests.list', { taskId: task.id })).toHaveLength(1);
+
+      /* A completed task whose agents changed nothing has nothing to publish. */
+      const empty = await client.request('tasks.create', { workspaceId: await wsId(), title: 'Rien', provider: 'claude-code' });
+      await client.request('tasks.start', { taskId: empty.id });
+      await waitTask(empty.id, 'review');
+      await client.request('tasks.complete', { taskId: empty.id });
+      const nothing = await client.request('pullRequests.create', { taskId: empty.id });
+      expect(nothing.pullRequests).toEqual([]);
+      expect(nothing.skipped).toHaveLength(1);
+      expect(github.created).toHaveLength(1);
+    } finally {
+      await git(['remote', 'remove', 'origin'], { cwd: repoDir });
+      cleanupDir(remote);
+    }
   });
 
   it('fails a pipeline whose step cannot start, cancels the blocked steps, and retries in the same worktree', async () => {
