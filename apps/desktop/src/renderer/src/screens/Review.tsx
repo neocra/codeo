@@ -27,7 +27,7 @@ export function ReviewScreen() {
   const pinned = reviewTaskId ? all.find((x) => x.id === reviewTaskId) : undefined;
   const open = pinned && !inReview.includes(pinned) && !completed.includes(pinned) ? [pinned, ...inReview] : inReview;
   const list = [...open, ...completed.filter((x) => !open.includes(x))];
-  const selected = pinned ?? inReview[0] ?? null;
+  const selected = pinned ?? inReview[0] ?? list[0] ?? null;
   const repoNames = (ids: string[]) => (ws?.repositories ?? []).filter((r) => ids.includes(r.id)).map((r) => r.name);
 
   return (
