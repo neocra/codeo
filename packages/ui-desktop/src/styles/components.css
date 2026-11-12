@@ -176,6 +176,11 @@ body { margin: 0; font-family: var(--font-sans); font-size: 14px; line-height: 2
 .cd-line--del { background: var(--diff-del); animation: cd-flash-del var(--dur-deliberate) var(--ease-standard) both; animation-delay: calc(min(var(--i, 0), 8) * var(--stagger-step)); }
 .cd-line--del .cd-line__sign { color: var(--coral); }
 .cd-line--add .cd-line__n, .cd-line--del .cd-line__n { color: var(--ink-muted); }
+.cd-line--selectable { cursor: pointer; }
+.cd-line--selectable:hover, .cd-line--selectable:focus-visible { box-shadow: inset 2px 0 0 var(--mint); outline: none; }
+.cd-line--selectable:hover .cd-line__n, .cd-line--selectable:focus-visible .cd-line__n { color: var(--ink); }
+.cd-review-comment { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--bg-200); border: 1px solid var(--line); box-shadow: inset 2px 0 0 var(--mint); }
+.cd-diff__note { position: sticky; left: 0; max-width: min(100%, 720px); padding: var(--space-2) var(--space-3); font-family: var(--font-sans); white-space: normal; }
 .syn-k { color: var(--syn-keyword); } .syn-s { color: var(--syn-string); } .syn-t { color: var(--syn-type); } .syn-f { color: var(--syn-fn); } .syn-c { color: var(--syn-comment); font-style: italic; } .syn-n { color: var(--syn-number); }
 
 /* ---------- calm + reduced motion ---------- */

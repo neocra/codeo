@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { Fragment, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { Icon } from './Icon';
 
 export interface DiffLine {
@@ -13,6 +13,12 @@ export interface DiffViewProps {
   additions?: number | undefined;
   deletions?: number | undefined;
   className?: string | undefined;
+  /** Makes numbered lines selectable (e.g. to comment on them); hunk headers stay inert. */
+  onLineSelect?: ((line: DiffLine, index: number) => void) | undefined;
+  /** Accessible label of a selectable line. */
+  lineSelectLabel?: string | undefined;
+  /** Content shown under a line (inline comments, a composer), spanning the diff's visible width. */
+  renderAfterLine?: ((index: number) => ReactNode) | undefined;
 }
 
 const KW = /^(public|private|protected|internal|readonly|static|async|await|var|let|const|return|if|else|new|null|class|interface|using|namespace|void|string|int|bool|true|false|this|import|export|from|function|type)$/;
@@ -39,7 +45,7 @@ export function highlight(src: string): ReactNode[] {
 }
 
 /** A file diff: still, readable, highlighted. New hunks flash once on arrival. */
-export function DiffView({ file, lines, additions, deletions, className }: DiffViewProps) {
+export function DiffView({ file, lines, additions, deletions, className, onLineSelect, lineSelectLabel, renderAfterLine }: DiffViewProps) {
   let add = 0;
   let del = 0;
   let changed = 0;
@@ -61,13 +67,35 @@ export function DiffView({ file, lines, additions, deletions, className }: DiffV
         {lines.map((l, i) => {
           const t = l.type ?? 'ctx';
           const idx = t === 'ctx' ? 0 : changed++;
+          const selectable = Boolean(onLineSelect) && (l.old !== undefined || l.new !== undefined);
+          const after = renderAfterLine?.(i);
           return (
-            <div key={i} className={`cd-line cd-line--${t}`} style={{ '--i': idx } as CSSProperties}>
-              <span className="cd-line__n">{l.old ?? ''}</span>
-              <span className="cd-line__n">{l.new ?? ''}</span>
-              <span className="cd-line__sign">{t === 'add' ? '+' : t === 'del' ? '−' : ' '}</span>
-              <span>{highlight(l.text || ' ')}</span>
-            </div>
+            <Fragment key={i}>
+              <div
+                className={['cd-line', `cd-line--${t}`, selectable ? 'cd-line--selectable' : null].filter(Boolean).join(' ')}
+                style={{ '--i': idx } as CSSProperties}
+                {...(selectable
+                  ? {
+                      role: 'button',
+                      tabIndex: 0,
+                      'aria-label': lineSelectLabel,
+                      onClick: () => onLineSelect?.(l, i),
+                      onKeyDown: (e: KeyboardEvent) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onLineSelect?.(l, i);
+                        }
+                      },
+                    }
+                  : {})}
+              >
+                <span className="cd-line__n">{l.old ?? ''}</span>
+                <span className="cd-line__n">{l.new ?? ''}</span>
+                <span className="cd-line__sign">{t === 'add' ? '+' : t === 'del' ? '−' : ' '}</span>
+                <span>{highlight(l.text || ' ')}</span>
+              </div>
+              {after ? <div className="cd-diff__note">{after}</div> : null}
+            </Fragment>
           );
         })}
       </div>

@@ -125,6 +125,17 @@ export const WorktreeDiffSchema = z.object({
 });
 export type WorktreeDiff = z.infer<typeof WorktreeDiffSchema>;
 
+/** A reviewer's note anchored on one line of a worktree diff (`side`: the new file, or the old one for a deleted line). */
+export const ReviewCommentSchema = z.object({
+  path: z.string().min(1).max(1000),
+  line: z.number().int().positive(),
+  side: z.enum(['new', 'old']),
+  /** The commented line as shown in the diff, so the agent sees what the reviewer saw. */
+  excerpt: z.string().max(1000).default(''),
+  body: z.string().trim().min(1).max(5000),
+});
+export type ReviewComment = z.infer<typeof ReviewCommentSchema>;
+
 export const GitHubStatusSchema = z.object({
   installed: z.boolean(),
   version: z.string().nullable(),
@@ -217,6 +228,26 @@ export const commands = {
   'tasks.complete': define(
     z.object({ taskId: IdSchema, winnerSubtaskId: IdSchema.optional() }),
     TaskSchema,
+    'session:write',
+  ),
+  /**
+   * Sends a reviewed lane back to its agent: general feedback and/or inline diff comments become the agent's next turn
+   * in its own session and worktree. The task moves `review` → `running` and returns to `review` when the agent is done.
+   * `subtaskId` is required when the task has several lanes that can be revised (parallel lanes, Best-of-N candidates).
+   */
+  'tasks.requestChanges': define(
+    z
+      .object({
+        taskId: IdSchema,
+        subtaskId: IdSchema.optional(),
+        feedback: z.string().trim().max(20_000).default(''),
+        comments: z.array(ReviewCommentSchema).max(100).default([]),
+      })
+      .refine((p) => p.feedback.length > 0 || p.comments.length > 0, {
+        message: 'feedback or comments required',
+        path: ['feedback'],
+      }),
+    z.object({ task: TaskSchema, session: AgentSessionSchema }),
     'session:write',
   ),
   'tasks.cancel': define(z.object({ taskId: IdSchema }), TaskSchema, 'session:write'),

@@ -186,6 +186,10 @@ export const SubtaskSchema = z.object({
   error: z.string().nullable().default(null),
   /** Start of the current attempt: crash recovery only adopts sessions created after it (a retry detaches older ones). */
   attemptStartedAt: IsoDateSchema.nullable().default(null),
+  /** How many times the human sent this subtask's work back from review with requested changes. */
+  reviewRounds: z.number().int().min(0).default(0),
+  /** The agent is working on review feedback: a failed or stopped turn returns the lane to review instead of failing the task. */
+  revising: z.boolean().default(false),
 });
 export type Subtask = z.infer<typeof SubtaskSchema>;
 

@@ -357,6 +357,94 @@ describe('orchestration and worktrees', () => {
     expect(first!.status).toBe('completed');
   });
 
+  it('sends review feedback and inline comments back to the agent, then returns the task to review', async () => {
+    const before = fake.starts.length;
+    const task = await client.request('tasks.create', { workspaceId: await wsId(), title: 'Boucle', objective: 'Changer a.txt', provider: 'claude-code' });
+    await expect(client.request('tasks.requestChanges', { taskId: task.id, feedback: 'trop tôt' })).rejects.toThrow(/en revue/);
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'review');
+    await expect(client.request('tasks.requestChanges', { taskId: task.id, feedback: '   ' })).rejects.toThrow();
+    const sessionId = (await client.request('tasks.get', { taskId: task.id })).subtasks[0]!.sessionId!;
+
+    const sent = await client.request('tasks.requestChanges', {
+      taskId: task.id,
+      feedback: 'Ajoute un test.',
+      comments: [
+        { path: 'src/b.ts', line: 3, side: 'new', excerpt: 'const x = `1`', body: 'Renomme x.' },
+        { path: 'a.txt', line: 1, side: 'old', excerpt: 'a', body: 'Pourquoi supprimer ?\nGarde-la.' },
+      ],
+    });
+    expect(sent.task.status).toBe('running');
+    expect(sent.session.id).toBe(sessionId);
+    await waitTask(task.id, 'review');
+    const after = await client.request('tasks.get', { taskId: task.id });
+    expect(after.subtasks[0]).toMatchObject({ status: 'completed', reviewRounds: 1, sessionId });
+    expect(after.progress).toBe(90);
+    /* Same agent, same conversation, same worktree: the feedback is its next turn. */
+    expect(fake.starts).toHaveLength(before + 1);
+    const prompt = fake.starts[before]!.prompts[1]!;
+    expect(prompt).toContain('tour 1');
+    expect(prompt).toContain('Retour général :\nAjoute un test.');
+    expect(prompt.indexOf('### a.txt')).toBeLessThan(prompt.indexOf('### src/b.ts'));
+    expect(prompt).toContain("- ligne 3 : `const x = '1'`\n  Renomme x.");
+    expect(prompt).toContain('- ligne 1 (supprimée) : `a`\n  Pourquoi supprimer ?\n  Garde-la.');
+    const transcript = await client.request('sessions.get', { sessionId });
+    expect(transcript.entries.some((e) => e.kind === 'user_message' && e.text.includes('Renomme x.'))).toBe(true);
+
+    await client.request('tasks.requestChanges', { taskId: task.id, feedback: 'Encore une chose.' });
+    await waitTask(task.id, 'review');
+    expect((await client.request('tasks.get', { taskId: task.id })).subtasks[0]!.reviewRounds).toBe(2);
+    expect(fake.starts[before]!.prompts[2]).toContain('tour 2');
+    await client.request('tasks.complete', { taskId: task.id });
+    await expect(client.request('tasks.requestChanges', { taskId: task.id, feedback: 'trop tard' })).rejects.toThrow(/en revue/);
+  });
+
+  it('returns the lane to review when the revision turn fails, and hands the next feedback to a fresh agent in the same worktree', async () => {
+    const before = fake.starts.length;
+    const task = await client.request('tasks.create', { workspaceId: await wsId(), title: 'Reprise', objective: 'Changer a.txt', provider: 'claude-code' });
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'review');
+    const first = (await client.request('tasks.get', { taskId: task.id })).subtasks[0]!;
+    await client.request('tasks.requestChanges', { taskId: task.id, feedback: 'Corrige ça fail-turn' });
+    await waitFor(async () => {
+      const t = await client.request('tasks.get', { taskId: task.id });
+      return t.status === 'review' && t.subtasks[0]!.error !== null;
+    });
+    const failed = (await client.request('tasks.get', { taskId: task.id })).subtasks[0]!;
+    expect(failed).toMatchObject({ status: 'completed', revising: false, reviewRounds: 1, sessionId: first.sessionId });
+    expect(failed.error).toContain('quota épuisé');
+
+    const sent = await client.request('tasks.requestChanges', { taskId: task.id, feedback: 'Deuxième essai.' });
+    expect(sent.session.id).not.toBe(first.sessionId);
+    await waitTask(task.id, 'review');
+    const after = (await client.request('tasks.get', { taskId: task.id })).subtasks[0]!;
+    expect(after).toMatchObject({ status: 'completed', revising: false, reviewRounds: 2, error: null, sessionId: sent.session.id });
+    /* A fresh agent, in the same worktree, with the original instructions followed by the feedback. */
+    expect(fake.starts).toHaveLength(before + 2);
+    expect(fake.starts[before + 1]!.cwd).toBe(fake.starts[before]!.cwd);
+    expect(fake.starts[before + 1]!.prompts[0]).toMatch(/Changer a\.txt[\s\S]*tour 2[\s\S]*Deuxième essai\./);
+    await expect(client.request('sessions.send', { sessionId: first.sessionId!, text: 'encore' })).rejects.toThrow(/remplacée/);
+  });
+
+  it('asks which lane to revise when several agents worked, and refuses a step later steps built on', async () => {
+    const task = await client.request('tasks.create', {
+      workspaceId: await wsId(), title: 'Voies', provider: 'claude-code', orchestration: 'parallel',
+      subtasks: [agent({ title: 'API', role: 'backend' }), agent({ title: 'UI', role: 'frontend' }), agent({ title: 'Revue', role: 'reviewer', dependsOn: [0] })],
+    });
+    await client.request('tasks.start', { taskId: task.id });
+    await waitTask(task.id, 'review');
+    const [api, ui, review] = (await client.request('tasks.get', { taskId: task.id })).subtasks;
+    await expect(client.request('tasks.requestChanges', { taskId: task.id, feedback: 'x' })).rejects.toThrow(/choisissez/);
+    await expect(client.request('tasks.requestChanges', { taskId: task.id, subtaskId: api!.id, feedback: 'x' })).rejects.toThrow(/s’appuie déjà/);
+    await expect(client.request('tasks.requestChanges', { taskId: task.id, subtaskId: 'sub_nope', feedback: 'x' })).rejects.toThrow(/rien à lui renvoyer/);
+    const sent = await client.request('tasks.requestChanges', { taskId: task.id, subtaskId: ui!.id, feedback: 'Le bouton est trop petit.' });
+    expect(sent.session.id).toBe(ui!.sessionId);
+    await waitTask(task.id, 'review');
+    const after = await client.request('tasks.get', { taskId: task.id });
+    expect(after.subtasks.map((s) => s.reviewRounds)).toEqual([0, 1, 0]);
+    expect(after.subtasks.map((s) => s.sessionId)).toEqual([api!.sessionId, ui!.sessionId, review!.sessionId]);
+  });
+
   it('publishes the kept best-of-n candidate as a pull request: commit, push, open, then adopt and refresh', async () => {
     const remote = mkdtempSync(path.join(os.tmpdir(), 'codeo-origin-'));
     await git(['init', '-q', '--bare', '-b', 'main'], { cwd: remote });

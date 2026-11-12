@@ -180,6 +180,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'tasks.create': async (p) => tasks.create(p),
     'tasks.start': async (p) => tasks.start(p.taskId),
     'tasks.complete': async (p) => tasks.complete(p.taskId, p.winnerSubtaskId),
+    'tasks.requestChanges': async (p) => tasks.requestChanges(p),
     'tasks.cancel': async (p) => tasks.cancel(p.taskId),
     'tasks.pause': async (p) => tasks.pause(p.taskId),
     'tasks.resume': async (p) => tasks.resume(p.taskId),

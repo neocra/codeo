@@ -2,7 +2,24 @@
 
 _Updated: 2026-11-12_
 
-## Current milestone: Phase 5 — review and pull requests (in progress)
+## Current milestone: Phase 5 — review and pull requests (done)
+
+### Phase 5, step 4: review loop — request changes (done and verified)
+- Command `tasks.requestChanges` (`session:write`): general feedback and/or inline diff comments (`path`, `line`,
+  `side` new/old, the quoted line, the comment) are sent back to one lane's agent as its next turn, in its own
+  session and worktree. The task moves `review` → `running` and returns to `review` when the agent is done; each
+  round is counted on the subtask (`reviewRounds`, JSON column, no migration). The prompt (French, like the others)
+  lists the feedback, then the comments grouped by file and ordered by line.
+- Target: `subtaskId` (a completed step no later step built on — parallel lane, Best-of-N candidate); omitted, the
+  runtime picks the only revisable step (single, or the last step of a sequential/pipeline lane) and asks otherwise.
+- Failure handling: a revision turn that fails or is stopped returns the lane to review with the reason
+  (`revising` flag) instead of failing the task — the reviewed work is untouched. The next request after a failed
+  turn closes the old handle and starts a fresh agent in the same worktree (original instructions + feedback);
+  same fallback when a provider conversation cannot be resumed at all. Nothing startable → the task stays in review.
+- Desktop Review screen: click a diff line to comment (inline composer, ⌘/Ctrl+Enter, Esc), comments shown under
+  their line and removable, a "Request changes" panel per lane (general feedback + comment count), a "Review round N"
+  pill, a banner with "Follow the session" while the agent works, and a warning when a revision failed.
+  `DiffView` gained `onLineSelect` / `renderAfterLine` (keyboard-accessible selectable lines).
 
 ### Phase 5, step 3: pull request follow-up (done and verified)
 - Background refresh: every 2 minutes (`pullRequestRefreshMs`, `0` disables) the runtime re-reads every PR GitHub
@@ -87,7 +104,7 @@ _Updated: 2026-11-12_
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
-- Review has no inline comments or "request changes" loop yet: to iterate, talk to the agent from its session while the task is in review.
+- Review comments are not persisted as drafts (they live in the screen until sent) and are not posted to GitHub PRs; after completion, iterate with a new task.
 - Demo mode with the Elyndor / Codeo Cloud datasets: not yet implemented.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox (`workspace-write`).
 - Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
@@ -95,8 +112,17 @@ _Updated: 2026-11-12_
 
 ### Next priorities
 1. Runtime relay client to the gateway + mobile pairing by QR (phase 6/7).
-2. Review loop (phase 5 follow-up): inline comments / "request changes" sent back to the agents.
-3. Demo mode dataset, clearly separated from live data.
+2. Demo mode dataset, clearly separated from live data (open PR neocra/codeo#10 needs a rebase).
+
+## Verification log — 2026-11-12 (phase 5, review loop)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` (17 packages/apps) | clean |
+| `pnpm test` | 137 tests passed, 0 failed (runtime 32: feedback + inline comments become the same agent's next turn and the task returns to review, rounds counted, refused outside review; lane choice and dependents rule on a parallel task; a failed revision turn returns to review with its reason and the next request starts a fresh agent in the same worktree) |
+| `pnpm lint` | 0 errors |
+| `tsup` runtime bundle, `electron-vite build` | built |
+| Running Electron app + real Claude Code, seeded demo repo | two inline comments + feedback sent from the Review screen; the seed's fake conversation id could not be resumed → lane back in review with the provider's error; resent → a fresh Claude Code agent in the same worktree escaped CSV fields (RFC 4180), added the currency column and a test; task back in review at round 3 |
 
 ## Verification log — 2026-11-12 (phase 5, PR follow-up)
 
