@@ -22,6 +22,7 @@ import type { EventBus } from '../event-bus';
 import { laneKey, type SessionService } from './sessions';
 import type { WorkspaceService } from './workspaces';
 import type { WorktreeService } from './worktrees';
+import { changeRequestPrompt } from './review-feedback';
 
 const RESUME_PROMPT = 'Reprends la tâche là où tu t’étais arrêté et termine-la.';
 /** Output of a previous pipeline step handed to the next one. */
@@ -323,6 +324,8 @@ export class TaskService {
         worktreeId: null,
         error: null,
         attemptStartedAt: null,
+        reviewRounds: 0,
+        revising: false,
         order: i,
       };
     });
@@ -484,6 +487,125 @@ export class TaskService {
           );
       }
       return updated;
+    });
+  }
+
+  /**
+   * Sends one reviewed lane back to its agent (see `tasks.requestChanges`). The feedback becomes the next turn of the
+   * subtask's own session, in its worktree; the task is `running` until that agent finishes, then back in `review`.
+   * When the provider conversation cannot be resumed, a fresh agent starts in the same worktree with the original
+   * instructions followed by the feedback. If nothing could be started, the task stays in review untouched.
+   */
+  requestChanges(
+    input: CommandParsedParams<'tasks.requestChanges'>,
+  ): Promise<{ task: Task; session: AgentSession }> {
+    return this.locked(input.taskId, async () => {
+      let task = await this.get(input.taskId);
+      if (task.status !== 'review')
+        throw localizedError(
+          'CONFLICT',
+          'task.changesNotInReview',
+          undefined,
+          'Seule une tâche en revue peut recevoir des demandes de modification.',
+        );
+      /* A step whose work later steps already built on cannot change alone (their results would be stale). */
+      const dependentOf = (s: Subtask) =>
+        task.subtasks.find(
+          (o) =>
+            o.id !== s.id &&
+            subtaskDependencies(task, o).includes(s.id) &&
+            o.status !== 'pending' &&
+            o.status !== 'cancelled',
+        );
+      let target: Subtask | undefined;
+      if (input.subtaskId) {
+        target = task.subtasks.find((s) => s.id === input.subtaskId);
+        if (!target || target.status !== 'completed' || !target.sessionId)
+          throw localizedError(
+            'INVALID_PARAMS',
+            'review.targetInvalid',
+            undefined,
+            'Cette étape n’est pas un travail terminé de la tâche : rien à lui renvoyer.',
+          );
+        const dependent = dependentOf(target);
+        if (dependent)
+          throw localizedError(
+            'CONFLICT',
+            'lane.dependentsDone',
+            { step: dependent.title },
+            `L’étape « ${dependent.title} » s’appuie déjà sur ce travail : redémarrez la tâche pour relancer la chaîne.`,
+          );
+      } else {
+        const revisable = task.subtasks.filter(
+          (s) => s.status === 'completed' && s.sessionId && !dependentOf(s),
+        );
+        if (revisable.length !== 1)
+          throw localizedError(
+            'INVALID_PARAMS',
+            'review.targetRequired',
+            undefined,
+            'Plusieurs agents ont travaillé sur cette tâche : choisissez celui à qui renvoyer les retours.',
+          );
+        target = revisable[0]!;
+      }
+      const original = target;
+      const round = original.reviewRounds + 1;
+      const prompt = changeRequestPrompt({ feedback: input.feedback, comments: input.comments, round });
+      /* Restores the review exactly as it was when nothing could be started. */
+      const backToReview = async (err: unknown): Promise<never> => {
+        await this.save(patchSubtask(task, original.id, original), 'review', { progress: 90 });
+        throw err;
+      };
+
+      task = patchSubtask(task, original.id, {
+        status: 'running',
+        reviewRounds: round,
+        revising: true,
+        error: null,
+      });
+      task = await this.save(task, 'running', { subtasks: task.subtasks, progress: taskProgress(task) });
+      /* After a failed turn (typically a provider conversation that can no longer be resumed) a fresh agent takes over. */
+      const previous = await this.sessions.get(original.sessionId!);
+      if (previous.status === 'failed' && this.sessions.isLive(previous.id)) {
+        /* Closed first, so the old provider handle cannot keep working beside its replacement. */
+        try {
+          await this.sessions.cancel(previous.id, { fromScheduler: true });
+        } catch (err) {
+          return backToReview(err);
+        }
+      }
+      if (previous.status !== 'failed') {
+        try {
+          const session = await this.sessions.send(previous.id, prompt, { fromScheduler: true });
+          return { task, session };
+        } catch (err) {
+          /* A live handle refused the turn: never start a second agent beside it. */
+          if (this.sessions.isLive(previous.id)) return backToReview(err);
+          this.log.warn('change request starts a fresh agent instead of resuming', {
+            taskId: task.id,
+            subtaskId: original.id,
+            err: String(err),
+          });
+        }
+      }
+      /* Detachment and the new attempt boundary are durable before the replacement starts (same rule as resume). */
+      task = patchSubtask(task, original.id, {
+        sessionId: null,
+        attemptStartedAt: new Date().toISOString(),
+      });
+      await this.repo.upsert({ ...task, updatedAt: new Date().toISOString() });
+      try {
+        const sub = task.subtasks.find((s) => s.id === original.id)!;
+        const { session, worktree } = await this.launch(task, sub, prompt);
+        task = patchSubtask(task, original.id, {
+          sessionId: session.id,
+          worktreeId: worktree?.id ?? original.worktreeId,
+        });
+        task = await this.save(task, 'running', { subtasks: task.subtasks });
+        return { task, session };
+      } catch (err) {
+        return backToReview(err);
+      }
     });
   }
 
@@ -679,6 +801,8 @@ export class TaskService {
   private async launch(
     task: Task,
     sub: Subtask,
+    /** Appended to the subtask's prompt (review feedback for a fresh agent). */
+    extra?: string,
   ): Promise<{ session: AgentSession; worktree: Worktree | null }> {
     const ws = await this.workspaces.get(task.workspaceId);
     const repositoryId =
@@ -686,16 +810,17 @@ export class TaskService {
     if (task.isolation === 'worktree' && repositoryId) {
       const lane = this.worktrees.lanePath(task, sub, repositoryId);
       return this.sessions.worktreeLocks.run(laneKey(lane), () =>
-        this.launchInLane(task, sub, repositoryId),
+        this.launchInLane(task, sub, repositoryId, extra),
       );
     }
-    return this.launchInLane(task, sub, repositoryId);
+    return this.launchInLane(task, sub, repositoryId, extra);
   }
 
   private async launchInLane(
     task: Task,
     sub: Subtask,
     repositoryId: string | null,
+    extra?: string,
   ): Promise<{ session: AgentSession; worktree: Worktree | null }> {
     const worktree =
       task.isolation === 'worktree' && repositoryId
@@ -710,7 +835,7 @@ export class TaskService {
         provider: sub.assignment.provider,
         role: sub.assignment.role,
         title: (task.subtasks.length > 1 ? `${prefix} · ${sub.title}` : prefix).slice(0, 200),
-        prompt: await this.buildPrompt(task, sub, worktree),
+        prompt: [await this.buildPrompt(task, sub, worktree), extra].filter(Boolean).join('\n\n'),
         model: sub.assignment.model,
         executionMode: sub.assignment.executionMode,
       },
@@ -904,6 +1029,16 @@ export class TaskService {
     }
     const status = SUBTASK_STATUS_FROM_SESSION[session.status];
     if (!status) return;
+    if (sub.revising && status !== 'running' && status !== 'waiting_approval') {
+      /* The work under review is still there: a failed or stopped revision returns the lane to review, with the reason. */
+      task = patchSubtask(task, sub.id, {
+        status: 'completed',
+        revising: false,
+        error: status === 'failed' ? (session.error ?? sub.error) : status === 'cancelled' ? null : sub.error,
+      });
+      await this.advance(task);
+      return;
+    }
     task = patchSubtask(
       task,
       sub.id,

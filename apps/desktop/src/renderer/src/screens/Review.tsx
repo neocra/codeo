@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import type { FileDiff } from '@codeo/contracts';
+import type { FileDiff, ReviewComment } from '@codeo/contracts';
 import { orderedSubtasks, type Subtask, type Task, type Worktree } from '@codeo/domain';
 import { Banner, Button, Card, Choice, DiffView, EmptyState, Field, Icon, Input, PageHeader, StatusPill, Tabs, TaskRow, Textarea, type DiffLine } from '@codeo/ui-desktop';
 import { PullRequestRow } from '../components/PullRequestRow';
@@ -84,6 +84,14 @@ function TaskReview({ task }: { task: Task }) {
   const laneOf = (s: Subtask) => lanes.find((w) => w.id === s.worktreeId);
   const inReview = task.status === 'review';
   const winner = task.winnerSubtaskId ? task.subtasks.find((s) => s.id === task.winnerSubtaskId) : undefined;
+  const openSession = useUi((s) => s.openSession);
+  /* A lane sent back from review: its agent is working on the feedback, the task returns to review afterwards. */
+  const revising = task.status === 'running' ? task.subtasks.find((s) => s.reviewRounds > 0 && (s.status === 'running' || s.status === 'waiting_approval')) : undefined;
+  /* Shared lanes (single, sequential, pipeline) hold several steps: the runtime picks the last one. */
+  const reviseTarget = (w: Worktree): string | undefined => w.subtaskId ?? undefined;
+  const roundsOf = (w: Worktree) => Math.max(0, ...task.subtasks.filter((s) => s.worktreeId === w.id).map((s) => s.reviewRounds));
+  /* A revision that failed returned the lane to review with its reason. */
+  const revisionError = (subs: Subtask[]) => subs.find((s) => s.status === 'completed' && s.reviewRounds > 0 && s.error)?.error ?? null;
 
   /* Shared lanes (single, sequential, pipeline) hold every step's work; parallel lanes belong to one subtask each. */
   const laneTitle = (w: Worktree) => (w.subtaskId ? task.subtasks.find((s) => s.id === w.subtaskId)?.title : undefined) ?? task.title;
@@ -93,6 +101,17 @@ function TaskReview({ task }: { task: Task }) {
       <div className="cd-stack">
         {task.status === 'completed' ? (
           <Banner tone="info">{winner ? t('review.completedWinner', { title: winner.title }) : t('review.completed')}</Banner>
+        ) : null}
+
+        {revising ? (
+          <div className="cd-row-gap">
+            <Banner tone="info">{t('review.changes.sent')}</Banner>
+            {revising.sessionId ? (
+              <Button variant="ghost" size="sm" icon="session" onClick={() => openSession(revising.sessionId!)}>
+                {t('review.changes.openSession')}
+              </Button>
+            ) : null}
+          </div>
         ) : null}
 
         {task.isolation === 'none' ? (
@@ -115,12 +134,14 @@ function TaskReview({ task }: { task: Task }) {
             {candidate ? (
               (() => {
                 const lane = laneOf(candidate);
-                return lane ? <LaneDiff taskId={task.id} worktree={lane} title={candidate.title} /> : worktrees.isSuccess ? <Banner tone="warn">{t('review.candidateNoWorktree')}</Banner> : null;
+                return lane ? (
+                  <LaneDiff key={candidate.id} taskId={task.id} worktree={lane} title={candidate.title} rounds={candidate.reviewRounds} revisionError={revisionError([candidate])} revise={inReview ? { subtaskId: candidate.id } : null} />
+                ) : worktrees.isSuccess ? <Banner tone="warn">{t('review.candidateNoWorktree')}</Banner> : null;
               })()
             ) : null}
           </>
         ) : (
-          lanes.map((w) => <LaneDiff key={w.id} taskId={task.id} worktree={w} title={laneTitle(w)} />)
+          lanes.map((w) => <LaneDiff key={w.id} taskId={task.id} worktree={w} title={laneTitle(w)} rounds={roundsOf(w)} revisionError={revisionError(task.subtasks.filter((s) => s.worktreeId === w.id))} revise={inReview ? { subtaskId: reviseTarget(w) } : null} />)
         )}
 
         {error ? <Banner tone="error">{error}</Banner> : null}
@@ -221,10 +242,102 @@ function WorkspacePullRequests({ workspaceId, tasks }: { workspaceId: string | n
   );
 }
 
-function LaneDiff({ taskId, worktree, title }: { taskId: string; worktree: Worktree; title: string }) {
+type LineRef = Pick<ReviewComment, 'path' | 'line' | 'side' | 'excerpt'>;
+type DraftComment = LineRef & { id: number; body: string };
+
+const lineRef = (path: string, l: DiffLine): LineRef | null =>
+  l.type === 'del' ? (l.old !== undefined ? { path, line: l.old, side: 'old', excerpt: l.text } : null) : l.new !== undefined ? { path, line: l.new, side: 'new', excerpt: l.text } : null;
+const sameLine = (a: LineRef, b: LineRef) => a.path === b.path && a.line === b.line && a.side === b.side;
+
+function LaneDiff({ taskId, worktree, title, rounds, revisionError, revise }: { taskId: string; worktree: Worktree; title: string; rounds: number; revisionError: string | null; revise: { subtaskId: string | undefined } | null }) {
   const t = useT();
+  const qc = useQueryClient();
+  const openReview = useUi((s) => s.openReview);
   const diff = useWorktreeDiff(taskId, worktree.id);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [comments, setComments] = useState<DraftComment[]>([]);
+  const [composer, setComposer] = useState<LineRef | null>(null);
+  const [composerText, setComposerText] = useState('');
+  const [feedback, setFeedback] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const requestChanges = useMutation({
+    mutationFn: () =>
+      invoke('tasks.requestChanges', {
+        taskId,
+        ...(revise?.subtaskId ? { subtaskId: revise.subtaskId } : {}),
+        feedback,
+        comments: comments.map(({ path, line, side, excerpt, body }) => ({ path, line, side, excerpt, body })),
+      }),
+    onMutate: () => setError(null),
+    onSuccess: () => {
+      /* The task leaves the review list while its agent works: keep it on screen. */
+      openReview(taskId);
+      setComments([]);
+      setFeedback('');
+      setComposer(null);
+    },
+    onError: (e) => setError(describeError(e, t)),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['tasks'] });
+      void qc.invalidateQueries({ queryKey: ['home'] });
+    },
+  });
+  const openComposer = (ref: LineRef | null) => {
+    setComposer(ref);
+    setComposerText('');
+  };
+  const addComment = () => {
+    if (!composer || !composerText.trim()) return;
+    setComments((c) => [...c, { ...composer, body: composerText.trim(), id: Date.now() + c.length }]);
+    openComposer(null);
+  };
+  /* Comments and the composer appear under the line they are anchored on. */
+  const notesFor = (f: FileDiff, lines: DiffLine[]) => (i: number) => {
+    const l = lines[i];
+    const ref = l ? lineRef(f.path, l) : null;
+    if (!ref) return null;
+    const here = comments.filter((c) => sameLine(c, ref));
+    const composing = composer && sameLine(composer, ref);
+    if (!here.length && !composing) return null;
+    return (
+      <div className="cd-stack cd-stack--sm">
+        {here.map((c) => (
+          <div key={c.id} className="cd-review-comment">
+            <span className="cd-key">{t(c.side === 'old' ? 'review.comment.lineOld' : 'review.comment.line', { n: c.line })}</span>
+            <span className="cd-body-sm" style={{ flex: 1, whiteSpace: 'pre-wrap' }}>{c.body}</span>
+            <Button variant="ghost" size="sm" icon="x" onClick={() => setComments((all) => all.filter((x) => x.id !== c.id))}>
+              {t('review.comment.remove')}
+            </Button>
+          </div>
+        ))}
+        {composing ? (
+          <div className="cd-stack cd-stack--sm">
+            <Textarea
+              autoFocus
+              rows={3}
+              maxLength={5000}
+              aria-label={t('review.comment.placeholder')}
+              placeholder={t('review.comment.placeholder')}
+              value={composerText}
+              onChange={(e) => setComposerText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addComment();
+                if (e.key === 'Escape') openComposer(null);
+              }}
+            />
+            <div className="cd-row-gap">
+              <Button variant="secondary" size="sm" icon="plus" disabled={!composerText.trim()} onClick={addComment}>
+                {t('review.comment.save')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => openComposer(null)}>
+                {t('action.cancel')}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
   const data = diff.data;
   const autoExpand = data ? data.additions + data.deletions <= AUTO_EXPAND_LINES : false;
   const isOpen = (f: FileDiff) => expanded[f.path] ?? autoExpand;
@@ -237,6 +350,7 @@ function LaneDiff({ taskId, worktree, title }: { taskId: string; worktree: Workt
         <span className="cd-key" title={worktree.path}>
           {worktree.branch} ← {worktree.baseBranch}
         </span>
+        {rounds ? <StatusPill tone="attention">{t('review.changes.round', { n: rounds })}</StatusPill> : null}
         {data ? (
           <>
             <span className="cd-key">{data.files.length === 1 ? t('review.files.one') : t('review.files', { n: data.files.length })}</span>
@@ -251,6 +365,7 @@ function LaneDiff({ taskId, worktree, title }: { taskId: string; worktree: Workt
           {t('action.refresh')}
         </Button>
       </div>
+      {revisionError ? <Banner tone="warn">{t('review.changes.failed', { error: revisionError.trim().replace(/[.\s]+$/, '') })}</Banner> : null}
       {diff.isError ? <Banner tone="error">{describeError(diff.error, t)}</Banner> : null}
       {data?.truncated ? <Banner tone="warn">{t('review.truncated')}</Banner> : null}
       {data && !data.files.length ? <p className="cd-body-sm cd-muted" style={{ margin: 0 }}>{t('review.noChanges')}</p> : null}
@@ -280,7 +395,24 @@ function LaneDiff({ taskId, worktree, title }: { taskId: string; worktree: Workt
             f.binary ? (
               <p className="cd-body-sm cd-muted" style={{ margin: 0 }}>{t('review.binary')}</p>
             ) : f.hunks.length ? (
-              <DiffView file={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path} lines={toLines(f)} additions={f.additions} deletions={f.deletions} />
+              (() => {
+                const lines = toLines(f);
+                return (
+                  <DiffView
+                    file={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
+                    lines={lines}
+                    additions={f.additions}
+                    deletions={f.deletions}
+                    {...(revise
+                      ? {
+                          onLineSelect: (l: DiffLine) => openComposer(lineRef(f.path, l)),
+                          lineSelectLabel: t('review.comment.add'),
+                          renderAfterLine: notesFor(f, lines),
+                        }
+                      : {})}
+                  />
+                );
+              })()
             ) : (
               <p className="cd-body-sm cd-muted" style={{ margin: 0 }}>{t('review.noContentChange')}</p>
             )
@@ -288,6 +420,22 @@ function LaneDiff({ taskId, worktree, title }: { taskId: string; worktree: Workt
           {isOpen(f) && f.truncated ? <p className="cd-body-sm cd-muted" style={{ margin: 0 }}>{t('review.fileTruncated')}</p> : null}
         </div>
       ))}
+      {revise ? (
+        <div className="cd-stack cd-stack--sm">
+          <div className="cd-overline">{t('review.changes.title')}</div>
+          <p className="cd-body-sm cd-muted" style={{ margin: 0 }}>{t('review.changes.hint')}</p>
+          <Field label={t('review.changes.feedback')} htmlFor={`feedback-${worktree.id}`}>
+            <Textarea id={`feedback-${worktree.id}`} rows={3} maxLength={20_000} placeholder={t('review.changes.feedbackPlaceholder')} value={feedback} onChange={(e) => setFeedback(e.target.value)} />
+          </Field>
+          {error ? <Banner tone="error">{error}</Banner> : null}
+          <div className="cd-row-gap">
+            <Button variant="secondary" size="sm" icon="send" disabled={!feedback.trim() && !comments.length} loading={requestChanges.isPending} onClick={() => requestChanges.mutate()}>
+              {t('review.changes.send')}
+            </Button>
+            {comments.length ? <span className="cd-body-sm cd-muted">{t('review.changes.comments', { n: comments.length })}</span> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
