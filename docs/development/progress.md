@@ -2,7 +2,27 @@
 
 _Updated: 2026-11-12_
 
-## Current milestone: Phase 5 — review and pull requests (done)
+## Current milestone: Phase 6 — remote access (in progress)
+
+### Phase 6, step 1: runtime relay client + desktop pairing (done and verified)
+- `apps/runtime/src/remote/`: `gateway-api.ts` (register, pairing start, device list, revoke; runtime secret only in
+  `Authorization: Bearer`, every response parsed with zod) and `relay-client.ts`, the outbound socket to
+  `/v1/runtimes/<id>/connect`: answers the gateway's `hello` with `welcome`, replays the events the gateway is missing
+  (in order, live events queued meanwhile), streams events, answers forwarded requests with the remote scopes
+  (`read`, `session:write`, `approval:decide` — never `workspace:admin`, whatever the gateway says), heartbeat, reconnect
+  with backoff (1 s → 30 s); a refused secret (401/403 or close 4003) stops retrying and reports `unauthorized`.
+- `RemoteService`: registration stored in `settings` (`remote`; the secret is never returned by a command), reconnects at
+  boot when left on, re-registers when the gateway changes or refused the secret, closes first at shutdown. Plain HTTP is
+  only accepted for a gateway on localhost.
+- Commands `remote.status` (read), `remote.enable` / `remote.disable` / `remote.pairingStart` / `remote.devices` /
+  `remote.revokeDevice` (`workspace:admin`, so never reachable from a phone); event `RemoteStatusChanged`.
+  Approvals decided through the gateway are recorded as `mobile`. The local server and the relay share `executeRequest`.
+- Desktop Settings → "Remote access" card: gateway URL, status pill + last error, turn on/off, "Pair a phone" (QR code
+  rendered from tokens, dark on light in both themes, 6-digit code, countdown, closes itself when the phone appears),
+  paired devices (online/offline/revoked, paired/last seen) with two-step revocation. Devices poll every 30 s (2 s while
+  a code is shown) because the gateway does not notify pairings.
+
+## Phase 5 — review and pull requests (done)
 
 ### Phase 5, step 4: review loop — request changes (done and verified)
 - Command `tasks.requestChanges` (`session:write`): general feedback and/or inline diff comments (`path`, `line`,
@@ -100,6 +120,9 @@ _Updated: 2026-11-12_
 - Mobile foundation (Expo) and Gateway skeleton (see their READMEs).
 
 ### Known limitations
+- Remote access: the phone side of QR pairing is not built yet (desktop shows the code; pairing was exercised with a
+  scripted device). Gateway registrations live in the gateway's memory store, so a gateway restart means turning remote
+  access on again (the runtime then reports `unauthorized`). No certificate pinning, no push notifications.
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
@@ -111,8 +134,19 @@ _Updated: 2026-11-12_
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
-1. Runtime relay client to the gateway + mobile pairing by QR (phase 6/7).
+1. Mobile pairing by QR (phase 6, step 2): scan with `expo-camera`, `pairing/complete`, gateway transport in
+   `@codeo/remote-client` (Bearer header, access-token refresh with rotation), secure storage of the refresh token.
 2. Demo mode dataset, clearly separated from live data (open PR neocra/codeo#10 needs a rebase).
+
+## Verification log — 2026-11-12 (phase 6, relay client)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` (17 packages/apps) | clean |
+| `pnpm test` | 146 tests passed, 0 failed (runtime 38, incl. `remote.test.ts` through a real in-process gateway: register → dial out → QR pairing → phone reads, gets events, starts a session and approves (`decidedBy: mobile`), `workspace:admin` refused at the gateway and in the runtime → revoke cuts the phone → disable/re-enable keeps the registration → reconnect after the gateway drops it; a refused secret stops retrying) |
+| `pnpm lint` | 0 errors |
+| `tsup` runtime bundle, `electron-vite build` | built |
+| Running Electron app + real local gateway (`apps/gateway`, port 8787) | turned on from Settings → connected; QR + code shown; a scripted phone paired with the code, got `welcome` with 3 scopes, `runtime.info` ok, `remote.pairingStart` refused (FORBIDDEN); device listed online; revoked from the UI → phone socket closed 4003; gateway stopped → "Gateway unreachable", retrying |
 
 ## Verification log — 2026-11-12 (phase 5, review loop)
 

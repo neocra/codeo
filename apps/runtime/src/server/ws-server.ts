@@ -1,9 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { ClientMessageSchema, RuntimeError, type CommandScope, type ServerMessage } from '@codeo/contracts';
+import { ClientMessageSchema, type CommandScope, type ServerMessage } from '@codeo/contracts';
 import { redactSecrets, type Logger } from '@codeo/shared-utils';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Runtime } from '../runtime';
+import { executeRequest } from './execute';
 
 export interface ServerOptions {
   runtime: Runtime;
@@ -89,17 +90,7 @@ export async function startServer(opts: ServerOptions): Promise<RuntimeServer> {
         send({ kind: 'pong', t: msg.t });
         return;
       }
-      try {
-        const result = await opts.runtime.call(msg.command, msg.params, { scopes, clientKind });
-        send({ kind: 'response', id: msg.id, ok: true, result });
-      } catch (err) {
-        if (err instanceof RuntimeError) {
-          send({ kind: 'response', id: msg.id, ok: false, error: { code: err.code, message: err.message, details: err.details } });
-        } else {
-          log.error('command failed', { command: msg.command, err: err instanceof Error ? err.stack ?? err.message : String(err) });
-          send({ kind: 'response', id: msg.id, ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Erreur interne' } });
-        }
-      }
+      send(await executeRequest(opts.runtime, msg, { scopes, clientKind }, log));
     });
     ws.on('close', () => {
       clearTimeout(authTimer);

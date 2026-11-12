@@ -144,6 +144,54 @@ export const GitHubStatusSchema = z.object({
 });
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 
+/** Remote access through the Codeo gateway (phase 6): the runtime dials out, phones are paired by QR code. */
+export const RemoteConnectionSchema = z.enum([
+  /** Remote access is off: nothing dials out. */
+  'disabled',
+  /** Dialling the gateway (first attempt or reconnecting after a drop). */
+  'connecting',
+  /** The gateway relays phone requests to this runtime. */
+  'connected',
+  /** The gateway cannot be reached; retried with backoff. */
+  'offline',
+  /** The gateway refused this runtime's secret (deleted, or another gateway): enable again to re-register. */
+  'unauthorized',
+]);
+export type RemoteConnection = z.infer<typeof RemoteConnectionSchema>;
+
+export const RemoteStatusSchema = z.object({
+  enabled: z.boolean(),
+  gatewayUrl: z.string().nullable(),
+  /** The id the gateway gave this runtime at registration (never the secret). */
+  runtimeId: z.string().nullable(),
+  connection: RemoteConnectionSchema,
+  connectedAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+});
+export type RemoteStatus = z.infer<typeof RemoteStatusSchema>;
+
+export const RemotePairingSchema = z.object({
+  /** 6 digits, single use, for manual entry on the phone. */
+  code: z.string(),
+  expiresAt: z.string(),
+  /** JSON payload `{ v, gateway, code, runtimeId, nonce }` the desktop renders as a QR code. */
+  qrPayload: z.string(),
+});
+export type RemotePairing = z.infer<typeof RemotePairingSchema>;
+
+export const PairedDeviceSchema = z.object({
+  deviceId: z.string(),
+  name: z.string(),
+  platform: z.enum(['ios', 'android']),
+  scopes: z.array(CommandScopeSchema),
+  pairedAt: z.string(),
+  lastSeenAt: z.string().nullable(),
+  revoked: z.boolean(),
+  revokedAt: z.string().nullable(),
+  connected: z.boolean(),
+});
+export type PairedDevice = z.infer<typeof PairedDeviceSchema>;
+
 export const commands = {
   'runtime.info': define(z.object({}), RuntimeInfoSchema, 'read'),
 
@@ -339,6 +387,14 @@ export const commands = {
     ApprovalRequestSchema,
     'approval:decide',
   ),
+
+  /* Remote access: settings change only from a local client (`workspace:admin` is never granted remotely). */
+  'remote.status': define(z.object({}), RemoteStatusSchema, 'read'),
+  'remote.enable': define(z.object({ gatewayUrl: z.url({ protocol: /^https?$/ }).max(500) }), RemoteStatusSchema, 'workspace:admin'),
+  'remote.disable': define(z.object({}), RemoteStatusSchema, 'workspace:admin'),
+  'remote.pairingStart': define(z.object({}), RemotePairingSchema, 'workspace:admin'),
+  'remote.devices': define(z.object({}), z.array(PairedDeviceSchema), 'workspace:admin'),
+  'remote.revokeDevice': define(z.object({ deviceId: z.string().min(3).max(80) }), z.object({ deviceId: z.string(), revoked: z.boolean() }), 'workspace:admin'),
 
   'home.summary': define(z.object({ workspaceId: IdSchema.optional() }), HomeSummarySchema, 'read'),
 } as const;
