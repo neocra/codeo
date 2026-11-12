@@ -4,6 +4,27 @@ _Updated: 2026-11-12_
 
 ## Current milestone: Phase 6 — remote access (in progress)
 
+### Phase 6, step 2: mobile pairing by QR (done and verified in the iOS simulator; camera scan not exercised)
+- `@codeo/remote-client` gateway transport (`src/gateway.ts`): `parsePairingQr` (zod, `{v:1, gateway, code, runtimeId,
+  nonce}`), `completePairing` (`POST /v1/pairing/complete`, QR or a code typed by hand), `refreshCredentials`
+  (`POST /v1/auth/refresh`), `deviceConnectUrl`. HTTPS only, except this machine (`localhost`, `127.0.0.1`, `[::1]`,
+  the Android emulator's `10.0.2.2`). Errors are typed (`GatewayClientError.code`, `fatal` for refused/revoked).
+- `GatewaySession`: hands out a valid access token, refreshes 60 s before expiry, single-flight (the gateway rotates
+  refresh tokens and revokes a phone that presents a retired one), keeps the rotated token in memory and persists it
+  before handing out the access token; forced refreshes are limited to one per 30 s.
+- `RuntimeClient`: token provider called before each connection (`{ failures, rejected }`), `bearerHeader` sends it as
+  `Authorization: Bearer` on the upgrade (React Native's third `WebSocket` argument), close 4003 → immediate token
+  renewal, a fatal token error → terminal `unauthorized` state (no reconnect loop), `disconnected` event with the close
+  code (4004 = runtime offline behind the gateway).
+- `@codeo/shared-utils` exposes `./emitter` and `./deferred`; the client imports them instead of the barrel, whose
+  `node:crypto` import broke the React Native bundle (the mobile app did not bundle on `main` before this step).
+- Mobile: `expo-camera` scanner screen (`app/pair.tsx`: permission request / denied → phone settings, QR read once,
+  manual gateway + 6-digit code), credentials as one JSON item in the keychain with `WHEN_UNLOCKED_THIS_DEVICE_ONLY`
+  (never in backups), one `GatewaySession` per paired device for the app's life (an effect run twice cannot refresh the
+  same token twice). A paired phone connects through the gateway and ignores the direct URL/token. Plus → "Accès
+  distant": state, gateway, device, pairing date, pair again, forget (two steps). Empty states offer pairing, explain a
+  revoked phone and a computer that is not connected to the gateway.
+
 ### Phase 6, step 1: runtime relay client + desktop pairing (done and verified)
 - `apps/runtime/src/remote/`: `gateway-api.ts` (register, pairing start, device list, revoke; runtime secret only in
   `Authorization: Bearer`, every response parsed with zod) and `relay-client.ts`, the outbound socket to
@@ -120,9 +141,11 @@ _Updated: 2026-11-12_
 - Mobile foundation (Expo) and Gateway skeleton (see their READMEs).
 
 ### Known limitations
-- Remote access: the phone side of QR pairing is not built yet (desktop shows the code; pairing was exercised with a
-  scripted device). Gateway registrations live in the gateway's memory store, so a gateway restart means turning remote
-  access on again (the runtime then reports `unauthorized`). No certificate pinning, no push notifications.
+- Remote access: mobile pairing was run in the iOS simulator with a code typed by hand; the camera scan of the desktop's
+  QR code and a physical phone (keychain, network changes) are not verified yet. Gateway registrations live in the gateway's memory
+  store, so a gateway restart means turning remote access on again (the runtime then reports `unauthorized`, the phone
+  ends in `unauthorized` once its refresh token is gone). No certificate pinning, no push notifications, no Face ID gate
+  on approvals. "Forget this pairing" on the phone does not revoke it on the gateway (revoke from the desktop).
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
@@ -134,9 +157,21 @@ _Updated: 2026-11-12_
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
-1. Mobile pairing by QR (phase 6, step 2): scan with `expo-camera`, `pairing/complete`, gateway transport in
-   `@codeo/remote-client` (Bearer header, access-token refresh with rotation), secure storage of the refresh token.
+1. Scan the desktop's QR code from a physical phone, then phase 6, step 3: Face ID / Touch ID before `approval:decide`, and the runtime signing its `welcome` (key continuity).
 2. Demo mode dataset, clearly separated from live data (open PR neocra/codeo#10 needs a rebase).
+
+## Verification log — 2026-11-12 (phase 6, mobile pairing)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` (17 packages/apps) | clean |
+| `pnpm test` | 154 tests passed, 0 failed (remote-client 8, through a real in-process gateway and a scripted runtime: QR → pairing → device socket with a Bearer header → `runtime.info`, `remote.pairingStart` refused FORBIDDEN; manual code; used / mis-bound codes refused; unreachable gateway retryable; refresh before expiry, single-flight for 3 concurrent callers, forced refresh rate limited; replayed refresh token → fatal; revoked phone ends in `unauthorized` instead of reconnecting) |
+| `pnpm lint` | 0 errors |
+| `expo export --platform ios` | bundled (1346 modules, Hermes); failed before the `shared-utils` subpath fix with `Unable to resolve module node:crypto` |
+
+| iOS simulator (iPhone 15 Pro, Expo Go SDK 54) + local gateway (8787) + runtime on a throwaway data dir | empty state offers pairing → manual gateway + code → paired, home "Connecté", the runtime lists the device `connected: true` with the 3 remote scopes; app killed and relaunched → reconnects from the keychain; device revoked from the runtime → "Accès révoqué" with "Jumeler à nouveau", no reconnect loop. The captures caught two defects, fixed: the pairing screen's back link said "Plus" when opened from Home (now "Retour"), and "Jumeler à nouveau" was truncated next to "Oublier ce jumelage" (buttons now stacked) |
+
+Not verified in this session: the camera scan of the desktop's QR code (the simulator has no camera), a physical phone.
 
 ## Verification log — 2026-11-12 (phase 6, relay client)
 

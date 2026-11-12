@@ -11,14 +11,32 @@
     "ios": {
       "bundleIdentifier": "com.codeo.remote",
       "supportsTablet": false,
-      "infoPlist": { "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true } }
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "android": {
       "package": "com.codeo.remote",
       "softwareKeyboardLayoutMode": "resize",
       "usesCleartextTraffic": true
     },
-    "plugins": ["expo-router", "expo-font", "expo-secure-store"],
-    "experiments": { "typedRoutes": false }
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Codeo Remote uses the camera to scan the pairing QR code shown by Codeo on your computer.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
   }
 }

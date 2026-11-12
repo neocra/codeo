@@ -23,7 +23,22 @@ at the root).
 ## How it connects
 
 The app talks to the Codeo **runtime** over its WebSocket protocol (`@codeo/remote-client` +
-`@codeo/contracts`), exactly like the desktop app does.
+`@codeo/contracts`), exactly like the desktop app does — either through the **gateway** (pairing by QR
+code, the real remote path) or directly (development shortcut).
+
+### Through the gateway (pairing)
+
+1. On the computer: Settings → Remote access → turn it on with the gateway URL, then *Pair a phone*.
+2. In the app: *Plus → Accès distant → Jumeler avec mon ordinateur*, scan the QR code (or *Saisir le code*:
+   gateway address + 6-digit code).
+3. The credentials (access + refresh token) are stored in the keychain, readable only while the phone is
+   unlocked and never backed up. The access token is refreshed before it expires; a phone revoked from the
+   desktop shows *Accès révoqué* and offers to pair again.
+
+The gateway must be HTTPS, except a gateway on this machine (`localhost`, or `10.0.2.2` from the Android
+emulator) during development. Run one locally with `pnpm --filter @codeo/gateway dev` (port 8787).
+
+### Directly (development)
 
 1. Start the runtime on your dev machine. It writes its discovery file to
    `~/.codeo/runtime.json`:
@@ -66,15 +81,11 @@ Real, backed by runtime commands:
   collapsible and their output is truncated.
 - **Approbations** — the inbox: `approvals.list({ status: 'pending' })`, with agent, task, summary,
   affected items, risk level, expiry countdown, Approuver / Refuser.
-- **Plus** — runtime URL + token (secure store), connection state, `runtime.info`, a local first
-  name for the greeting, language fr / en.
+- **Plus** — remote access (pairing state, gateway, device, pair again, forget), runtime URL + token
+  (secure store), connection state, `runtime.info`, a local first name for the greeting, language fr / en.
+- **Jumelage** (`app/pair.tsx`) — `expo-camera` QR scanner, manual code entry.
 
-Placeholder, clearly labelled in the UI:
-
-- **Accès distant** in *Plus*: QR pairing and the gateway arrive in phase 6/7
-  (`settings.remote.placeholder`).
-
-Not in phase 1: push notifications, the review / diff screen, creating tasks from the phone.
+Not yet: push notifications, Face ID before approving, the review / diff screen, creating tasks from the phone.
 
 ## Layout
 
@@ -83,6 +94,7 @@ app/                 expo-router routes
   _layout.tsx        fonts, QueryClient, ThemeProvider, RuntimeProvider
   (tabs)/            Accueil · Tâches · Sessions · Approbations · Plus
   session/[id].tsx   chat screen
+  pair.tsx           pairing with the computer (QR scan / manual code)
 components/          app-level compositions (Screen, ApprovalInboxCard, SessionRow, …)
 lib/
   runtime.tsx        RuntimeClient context, useCommand (TanStack Query), event bridge

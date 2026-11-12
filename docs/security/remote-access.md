@@ -83,8 +83,12 @@ runtime protocol over the outbound socket, playing the *server* role:
 - **TLS termination guidance and pinning.** Production deployments should terminate TLS at a reverse
   proxy with HSTS and forward `X-Forwarded-For` (`TRUST_PROXY=true`); in-process TLS is for single-host
   setups. Certificate pinning in the mobile app and in the runtime relay client is not implemented.
-- **Mobile side of pairing.** The runtime relay client (`apps/runtime/src/remote/`) and the desktop pairing UI exist;
-  the phone does not scan the QR code or speak to the gateway yet.
+- **Mobile side of pairing — done (phase 6, step 2).** The phone scans the QR code (or takes the code by hand), calls
+  `pairing/complete`, keeps its credentials in the keychain (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`, excluded from backups),
+  connects to `/v1/devices/connect` with the access token in `Authorization: Bearer`, and refreshes it through one
+  single-flight `GatewaySession` per device so a rotated token is never presented twice by the phone itself
+  (`packages/remote-client/src/gateway.ts`). A refused refresh is terminal (`unauthorized`), never a retry loop.
+  Plain HTTP is refused except towards this machine. Forgetting the pairing on the phone does not revoke it server-side.
 - **Runtime identity end-to-end.** The phone trusts the gateway's statement of which runtime it talks
   to. The device `publicKey` accepted at pairing is stored but unused; a later phase should let the runtime
   sign its `welcome` with a key fingerprint shown during pairing, and let devices sign requests.
