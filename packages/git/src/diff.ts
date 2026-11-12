@@ -98,8 +98,13 @@ export function parseUnifiedDiff(patch: string, limits: DiffLimits = {}): FileDi
       } else if (raw.startsWith('rename to ')) file.path = raw.slice(10);
       else if (raw.startsWith('Binary files ')) {
         file.binary = true;
-        const m = /^Binary files (.+) and (.+) differ$/.exec(raw);
-        if (m && !file.path) file.path = stripPrefix(m[2]!, 'b/') ?? stripPrefix(m[1]!, 'a/') ?? '';
+        /* Plain string scanning (no backtracking regex): `Binary files <old> and <new> differ`. */
+        if (!file.path && raw.endsWith(' differ')) {
+          const pair = raw.slice('Binary files '.length, -' differ'.length);
+          const sep = pair.lastIndexOf(' and ');
+          if (sep >= 0)
+            file.path = stripPrefix(pair.slice(sep + 5), 'b/') ?? stripPrefix(pair.slice(0, sep), 'a/') ?? '';
+        }
       } else if (raw.startsWith('--- ')) {
         const p = stripPrefix(raw.slice(4), 'a/');
         if (p && !file.path) file.path = p;
