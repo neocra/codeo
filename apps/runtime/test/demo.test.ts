@@ -120,7 +120,14 @@ describe('demo / live data separation', () => {
   beforeAll(() => {
     dir = mkdtempSync(path.join(os.tmpdir(), 'codeo-demo-'));
   });
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  /* Windows keeps handles on the closed SQLite files briefly: retry, and never fail the suite on cleanup (as runtime.test.ts). */
+  afterAll(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (err) {
+      console.warn(`cleanup of ${dir} skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 
   it('seeds once and never opens the same data in the other mode', async () => {
     const demoDir = path.join(dir, 'demo');
