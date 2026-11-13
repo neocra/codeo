@@ -9,6 +9,7 @@ import { createAuthService, type AuthService } from './auth';
 import { systemClock, type Clock } from './clock';
 import type { GatewayConfig } from './config';
 import { errorBody, GatewayError, type GatewayErrorCode } from './errors';
+import { runMaintenance } from './maintenance';
 import { createPairingService } from './pairing';
 import { createRelay, RELAY_MAX_FRAME_BYTES, type Relay } from './relay';
 import { createRoutes } from './routes';
@@ -21,6 +22,8 @@ export interface BuildAppOptions {
   logger?: Logger | undefined;
   /** Injectable clock (tests advance it to exercise expiry). */
   clock?: Clock | undefined;
+  /** How often expired codes, tokens and old audit entries are deleted (default 1 h; 0 disables). */
+  maintenanceIntervalMs?: number | undefined;
 }
 
 export interface GatewayApp {
@@ -102,7 +105,20 @@ export async function buildApp(config: GatewayConfig, store: GatewayStore, opts:
   await app.register(websocket, { options: { maxPayload: RELAY_MAX_FRAME_BYTES } });
   await app.register(relay.plugin);
   await app.register(createRoutes({ store, auth, pairing, relay, audit, clock, log: log.child('http'), version: GATEWAY_VERSION, startedAt }));
-  app.addHook('onClose', async () => relay.close());
+  const maintenanceIntervalMs = opts.maintenanceIntervalMs ?? 60 * 60 * 1000;
+  let maintenance: Promise<void> = Promise.resolve();
+  const timer =
+    maintenanceIntervalMs > 0
+      ? setInterval(() => {
+          maintenance = runMaintenance({ store, clock, log: log.child('maintenance'), auditRetentionDays: config.auditRetentionDays });
+        }, maintenanceIntervalMs)
+      : null;
+  timer?.unref();
+  app.addHook('onClose', async () => {
+    if (timer) clearInterval(timer);
+    await maintenance;
+    await relay.close();
+  });
 
   return { app, relay, auth, tokens };
 }

@@ -1,8 +1,8 @@
 import type { CommandScope } from '@codeo/contracts';
 
 /*
- * Persistence interfaces. Everything the gateway remembers lives behind these interfaces so the
- * in-memory implementation below can be swapped for PostgreSQL without touching the services.
+ * Persistence interfaces. Everything the gateway remembers lives behind these interfaces: the
+ * in-memory implementation below (development, tests) and the PostgreSQL one (`postgres/store.ts`).
  * Timestamps are ISO-8601 strings; `now` arguments are epoch milliseconds (see clock.ts).
  */
 
@@ -101,14 +101,21 @@ export interface PairingCodeStore {
 export interface RefreshTokenStore {
   create(record: RefreshTokenRecord): Promise<void>;
   findByHash(tokenHash: string): Promise<RefreshTokenRecord | null>;
-  markRotated(id: string, rotatedAt: string): Promise<void>;
+  /**
+   * Retires the token. True only for the call that moved it from active to rotated, so two refreshes
+   * racing with the same token cannot both succeed (SQL: UPDATE … WHERE rotated_at IS NULL).
+   */
+  markRotated(id: string, rotatedAt: string): Promise<boolean>;
   deleteByDevice(deviceId: string): Promise<number>;
   prune(now: number): Promise<void>;
 }
 
 export interface AuditStore {
   append(entry: AuditEntry): Promise<void>;
+  /** Oldest first, the `limit` most recent matching entries (default 100). */
   list(opts?: { limit?: number; actor?: string; action?: string }): Promise<AuditEntry[]>;
+  /** Drops entries older than `before` (ISO-8601). */
+  prune(before: string): Promise<void>;
 }
 
 export interface GatewayStore {
@@ -117,6 +124,8 @@ export interface GatewayStore {
   pairingCodes: PairingCodeStore;
   refreshTokens: RefreshTokenStore;
   audit: AuditStore;
+  /** Releases connections (no-op in memory). */
+  close(): Promise<void>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -205,7 +214,9 @@ export function createMemoryStore(): GatewayStore {
       },
       async markRotated(id, rotatedAt) {
         const rec = refreshTokens.get(id);
-        if (rec) rec.rotatedAt = rotatedAt;
+        if (!rec || rec.rotatedAt !== null) return false;
+        rec.rotatedAt = rotatedAt;
+        return true;
       },
       async deleteByDevice(deviceId) {
         let n = 0;
@@ -233,6 +244,12 @@ export function createMemoryStore(): GatewayStore {
         const limit = opts.limit ?? 100;
         return out.slice(-limit).map((e) => ({ ...e }));
       },
+      async prune(before) {
+        const cutoff = Date.parse(before);
+        const keep = auditLog.filter((e) => Date.parse(e.at) >= cutoff);
+        auditLog.splice(0, auditLog.length, ...keep);
+      },
     },
+    async close() {},
   };
 }

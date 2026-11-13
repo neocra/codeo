@@ -1,14 +1,16 @@
 import { createLogger } from '@codeo/shared-utils';
 import { buildApp, GATEWAY_VERSION } from './app';
 import { loadConfig } from './config';
+import { connectPostgresStore } from './postgres';
 import { createMemoryStore } from './store';
 
 const bootLog = createLogger({ scope: 'gateway' });
 const config = loadConfig(process.env, { warn: (m) => bootLog.warn(m) });
 const log = createLogger({ scope: 'gateway', level: config.logLevel });
 
-/* Phase 1: in-memory store. Everything (registrations, pairings, refresh tokens, audit) is lost on restart. */
-const store = createMemoryStore();
+/* PostgreSQL when DATABASE_URL is set (required in production); otherwise the in-memory store, which loses
+ * registrations, pairings, refresh tokens and audit on restart. */
+const store = config.database ? await connectPostgresStore(config.database, log.child('db')) : createMemoryStore();
 const { app } = await buildApp(config, store, { logger: log });
 
 await app.listen({ port: config.port, host: config.host });
@@ -31,6 +33,7 @@ const shutdown = (signal: string) => {
   log.info('shutting down', { signal });
   app
     .close()
+    .then(() => store.close())
     .then(() => process.exit(0))
     .catch((err: unknown) => {
       log.error('shutdown failed', { err: err instanceof Error ? err.message : String(err) });

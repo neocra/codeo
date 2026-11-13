@@ -10,5 +10,5 @@ export default defineConfig({
   splitting: false,
   /* Workspace packages are bundled; published dependencies stay external. */
   noExternal: [/^@codeo\//],
-  external: ['fastify', '@fastify/websocket', 'ws', 'zod'],
+  external: ['fastify', '@fastify/websocket', 'ws', 'zod', 'pg'],
 });

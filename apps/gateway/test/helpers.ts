@@ -4,7 +4,19 @@ import type { RuntimeInfo } from '@codeo/contracts';
 import { createLogger } from '@codeo/shared-utils';
 import { buildApp, type GatewayApp } from '../src/app';
 import type { GatewayConfig } from '../src/config';
+import { openPostgresStore } from '../src/postgres';
 import { createMemoryStore, type GatewayStore } from '../src/store';
+import { createPgliteDatabase } from './pglite';
+
+/** `GATEWAY_TEST_STORE=postgres` runs every gateway test on the PostgreSQL store (PGlite). */
+export const TEST_STORE_KIND: 'memory' | 'postgres' = process.env.GATEWAY_TEST_STORE === 'postgres' ? 'postgres' : 'memory';
+
+const silentLogger = () => createLogger({ level: 'error', sink: () => undefined });
+
+export async function createTestStore(): Promise<GatewayStore> {
+  if (TEST_STORE_KIND === 'memory') return createMemoryStore();
+  return openPostgresStore(await createPgliteDatabase(), silentLogger());
+}
 
 export const TEST_SECRET = 'test-gateway-secret-0123456789abcdef0123456789';
 
@@ -21,6 +33,8 @@ export function testConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     accessTokenTtlSeconds: 900,
     refreshTokenTtlSeconds: 30 * 24 * 3600,
     logLevel: 'error',
+    database: null,
+    auditRetentionDays: 90,
     ...overrides,
   };
 }
@@ -42,11 +56,19 @@ export interface TestContext extends GatewayApp {
   clock: ReturnType<typeof fakeClock>;
 }
 
-export async function createTestApp(overrides: Partial<GatewayConfig> = {}): Promise<TestContext> {
+export interface TestAppOptions {
+  /** Defaults to a fresh store of TEST_STORE_KIND, closed with the app. */
+  store?: GatewayStore;
+  clock?: ReturnType<typeof fakeClock>;
+}
+
+export async function createTestApp(overrides: Partial<GatewayConfig> = {}, opts: TestAppOptions = {}): Promise<TestContext> {
   const config = testConfig(overrides);
-  const store = createMemoryStore();
-  const clock = fakeClock();
-  const built = await buildApp(config, store, { logger: createLogger({ level: 'error', sink: () => undefined }), clock: clock.now });
+  const owned = opts.store === undefined;
+  const store = opts.store ?? (await createTestStore());
+  const clock = opts.clock ?? fakeClock();
+  const built = await buildApp(config, store, { logger: silentLogger(), clock: clock.now, maintenanceIntervalMs: 0 });
+  if (owned) built.app.addHook('onClose', async () => store.close());
   return { ...built, store, config, clock };
 }
 

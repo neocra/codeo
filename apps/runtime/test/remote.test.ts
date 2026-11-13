@@ -2,7 +2,9 @@ import type { AgentProvider, ProviderSessionHandle, StartSessionOptions } from '
 import type { RemoteStatus, RuntimeEvent } from '@codeo/contracts';
 import type { ProviderStatus } from '@codeo/domain';
 import { buildApp, type GatewayApp } from '@codeo/gateway';
-import { createMemoryStore } from '@codeo/gateway/src/store';
+import { openPostgresStore } from '@codeo/gateway/src/postgres';
+import { createMemoryStore, type GatewayStore } from '@codeo/gateway/src/store';
+import { createReusablePgliteDatabase } from '@codeo/gateway/test/pglite';
 import { git } from '@codeo/git';
 import { RuntimeClient, parsePairingQr, runtimeFingerprint, runtimeIdentityCheck, type ConnectionState, type RuntimeClientOptions } from '@codeo/remote-client';
 import { randomBytes } from 'node:crypto';
@@ -69,18 +71,24 @@ let worktreesDir: string;
 const provider = new ApprovalProvider();
 const statuses: RemoteStatus[] = [];
 
-async function startGateway(): Promise<GatewayApp> {
+async function startGateway(store: GatewayStore = createMemoryStore(), port = 0): Promise<GatewayApp> {
   const built = await buildApp(
     {
-      env: 'test', port: 0, host: '127.0.0.1', publicUrl: 'http://127.0.0.1', secret: 'test-gateway-secret-0123456789abcdef0123456789',
+      env: 'test', port, host: '127.0.0.1', publicUrl: 'http://127.0.0.1', secret: 'test-gateway-secret-0123456789abcdef0123456789',
       tls: null, trustProxy: false, pairingCodeTtlSeconds: 300, accessTokenTtlSeconds: 900, refreshTokenTtlSeconds: 3600, logLevel: 'error',
+      database: null, auditRetentionDays: 90,
     },
-    createMemoryStore(),
-    { logger: quiet },
+    store,
+    { logger: quiet, maintenanceIntervalMs: 0 },
   );
-  await built.app.listen({ port: 0, host: '127.0.0.1' });
+  await built.app.listen({ port, host: '127.0.0.1' });
   return built;
 }
+
+const portOf = (g: GatewayApp): number => {
+  const addr = g.app.server.address();
+  return typeof addr === 'object' && addr ? addr.port : 0;
+};
 
 function phone(accessToken: string, verify?: RuntimeClientOptions['verify']): RuntimeClient {
   const url = gatewayUrl.replace('http:', 'ws:') + '/v1/devices/connect';
@@ -294,4 +302,45 @@ describe('relay client', () => {
     expect(states.filter((s) => s.connection === 'connecting')).toHaveLength(1);
     await relay.stop();
   });
+});
+
+describe('gateway restart (PostgreSQL store)', () => {
+  it('the runtime and a paired phone carry on after the gateway process restarts, without re-registering or re-pairing', async () => {
+    const { db, destroy } = await createReusablePgliteDatabase();
+    let pgGateway = await startGateway(await openPostgresStore(db, quiet));
+    const port = portOf(pgGateway);
+    const url = `http://127.0.0.1:${port}`;
+    const savedUrl = gatewayUrl;
+    try {
+      const on = await runtime.call('remote.enable', { gatewayUrl: url }, LOCAL);
+      await waitFor(() => runtime.services.remote.status().connection === 'connected');
+      gatewayUrl = url;
+      const { accessToken, deviceId } = await pairPhone();
+
+      /* The whole gateway goes away (process restart), then comes back on the same database and port. */
+      pgGateway.relay.close();
+      await pgGateway.app.close();
+      await waitFor(() => runtime.services.remote.status().connection !== 'connected');
+      pgGateway = await startGateway(await openPostgresStore(db, quiet), port);
+
+      await waitFor(() => runtime.services.remote.status().connection === 'connected', 10_000);
+      const status = runtime.services.remote.status();
+      expect(status.runtimeId).toBe(on.runtimeId);
+      expect(status.lastError ?? null).toBeNull();
+      expect(pgGateway.relay.isRuntimeConnected(on.runtimeId!)).toBe(true);
+
+      const client = phone(accessToken);
+      await client.connect();
+      expect((await client.request('home.summary', {})).workspace?.name).toBe('Remote');
+      client.close();
+      const devices = await runtime.call('remote.devices', {}, LOCAL);
+      expect(devices.map((d) => d.deviceId)).toContain(deviceId);
+    } finally {
+      gatewayUrl = savedUrl;
+      await runtime.call('remote.disable', {}, LOCAL);
+      pgGateway.relay.close();
+      await pgGateway.app.close();
+      await destroy();
+    }
+  }, 30_000);
 });
