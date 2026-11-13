@@ -205,7 +205,7 @@ _Updated: 2026-11-13_
 | Check | Result |
 |---|---|
 | `pnpm typecheck` / `pnpm lint` | 17/17 clean |
-| `pnpm test` | all pass; gateway 90 (45 × memory + 45 × PostgreSQL/PGlite: store contract 7, restart keeps runtimes/phones/tokens/pending codes/audit, concurrent refresh → one 200 + one 401 and the device revoked, migrations idempotent and a newer schema refused, `DATABASE_URL` required in production), runtime 51 (new: runtime + phone survive a gateway restart on the same database) |
+| `pnpm test` | all pass; gateway 84 (39 on the memory store + 45 on PostgreSQL/PGlite; the restart, migration and configuration suites run in the PostgreSQL project only: store contract 7, restart keeps runtimes/phones/tokens/pending codes/audit, concurrent refresh → one 200 + one 401 and the device revoked, migrations idempotent and a newer schema refused, `DATABASE_URL` required in production), runtime 51 (new: runtime + phone survive a gateway restart on the same database) |
 | Built gateway (`dist/main.js`) on the `pg` driver over the PostgreSQL wire protocol (`pglite-socket` server, on-disk data) | first boot migrated (`applied: [1]`), runtime registered, phone paired, second code started; gateway killed and restarted → no migration, `/v1/devices` lists the phone, refresh 200, the code started before the restart completes (201), replaying the rotated refresh token revokes the phone; logs show `postgres://postgres:***@…` |
 
 Not verified: a PostgreSQL server (Docker's daemon did not answer in this session, so the wire-protocol run used

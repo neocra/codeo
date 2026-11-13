@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { createLogger } from '@codeo/shared-utils';
 import { loadConfig } from '../src/config';
 import { describeConnectionString, migrate, MIGRATIONS, openPostgresStore } from '../src/postgres';
-import { connectWs, createTestApp, fakeClock, pairDevice, registerRuntime, type TestContext } from './helpers';
+import { connectWs, createTestApp, fakeClock, pairDevice, registerRuntime, TEST_STORE_KIND, type TestContext } from './helpers';
 import { createPgliteDatabase, createReusablePgliteDatabase } from './pglite';
 
 const silent = createLogger({ level: 'error', sink: () => undefined });
 
+/* These suites build their PostgreSQL stores themselves: run them once, in the postgres project. */
+const pgOnly = describe.skipIf(TEST_STORE_KIND !== 'postgres');
+
 /* What the PostgreSQL store is for: a gateway restart keeps runtimes, phones and their tokens. */
-describe('gateway restart on the PostgreSQL store', () => {
+pgOnly('gateway restart on the PostgreSQL store', () => {
   it('keeps registrations, paired phones, refresh tokens, pending codes and the audit trail', async () => {
     const { db, destroy } = await createReusablePgliteDatabase();
     const clock = fakeClock();
@@ -75,7 +78,7 @@ describe('gateway restart on the PostgreSQL store', () => {
   });
 });
 
-describe('migrations', () => {
+pgOnly('migrations', () => {
   it('apply once, record their version, and refuse a database from a newer gateway', async () => {
     const db = await createPgliteDatabase();
     try {
@@ -90,7 +93,7 @@ describe('migrations', () => {
   });
 });
 
-describe('database configuration', () => {
+pgOnly('database configuration', () => {
   const base = { GATEWAY_SECRET: 'x'.repeat(40) };
 
   it('production requires DATABASE_URL', () => {

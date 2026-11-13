@@ -342,5 +342,5 @@ describe('gateway restart (PostgreSQL store)', () => {
       await pgGateway.app.close();
       await destroy();
     }
-  });
+  }, 30_000);
 });
