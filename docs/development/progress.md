@@ -4,6 +4,23 @@ _Updated: 2026-11-13_
 
 ## Current milestone: Phase 6 — remote access (in progress)
 
+### Phase 6, step 4: persistent gateway store (done and verified)
+- PostgreSQL implementation of `GatewayStore` (`apps/gateway/src/postgres/`: `db.ts` pool + transactions on `pg`,
+  `migrations.ts` versioned schema applied at boot under an advisory lock, `store.ts` the five stores). Enabled by
+  `DATABASE_URL` (`postgres://…`, password masked in logs, `DATABASE_POOL_SIZE`); required when `NODE_ENV=production`,
+  development falls back to the in-memory store with a warning.
+- Security decisions are single statements: a pairing code is consumed by `UPDATE … WHERE used_at IS NULL RETURNING`;
+  `RefreshTokenStore.markRotated` now returns whether this call retired the token, and a refresh that loses the race is
+  treated as a replay (device revoked) — the memory store follows the same rule, so two concurrent refreshes with one
+  token could both succeed before.
+- Housekeeping every hour (`runMaintenance`): used/expired pairing codes, expired refresh tokens (they were never pruned
+  before) and audit entries older than `AUDIT_RETENTION_DAYS` (90). `AuditStore.prune`, `GatewayStore.close` added; the
+  relay's fire-and-forget last-seen writes now log a failure instead of raising an unhandled rejection.
+- Tests: every gateway test runs twice through vitest projects, on the memory store and on PostgreSQL (PGlite, in
+  process — no server needed in CI); a store contract suite (round-trips, single use under concurrency, rotation race,
+  prune, audit order/limit/filters) and a restart suite. Runtime e2e: the runtime and a paired phone carry on after the
+  gateway process restarts on the same database, without registering or pairing again.
+
 ### Phase 6, step 3: runtime identity + Face ID on approvals (done; verified in the iOS simulator except a Face ID match)
 - Runtime identity key (Ed25519, `apps/runtime/src/remote/identity.ts`), kept in `settings` (`remoteIdentity`) across
   gateway registrations. `remote.status` and `remote.pairingStart` return its `fingerprint`; the runtime adds the public
@@ -165,9 +182,9 @@ _Updated: 2026-11-13_
 
 ### Known limitations
 - Remote access: mobile pairing was run in the iOS simulator with a code typed by hand; the camera scan of the desktop's
-  QR code and a physical phone (keychain, network changes) are not verified yet. Gateway registrations live in the gateway's memory
-  store, so a gateway restart means turning remote access on again (the runtime then reports `unauthorized`, the phone
-  ends in `unauthorized` once its refresh token is gone). No certificate pinning, no push notifications; the runtime proves its identity at
+  QR code and a physical phone (keychain, network changes) are not verified yet. With `DATABASE_URL` unset (development) the gateway keeps
+  registrations in memory, so a restart means turning remote access on again; with PostgreSQL they survive. One gateway
+  instance per runtime: rate limiters and the relay are per process. No certificate pinning, no push notifications; the runtime proves its identity at
   connection time but frames are not signed end to end, and Face ID is enforced by the app only. "Forget this pairing" on the phone does not revoke it on the gateway (revoke from the desktop).
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
@@ -182,6 +199,17 @@ _Updated: 2026-11-13_
 ### Next priorities
 1. Scan the desktop's QR code from a physical phone (QR pairing pins the runtime key; Face ID match on a real device).
 2. Demo data for review diffs and pull requests (the demo dataset has tasks, sessions and approvals only).
+
+## Verification log — 2026-11-13 (phase 6, persistent gateway store)
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck` / `pnpm lint` | 17/17 clean |
+| `pnpm test` | all pass; gateway 90 (45 × memory + 45 × PostgreSQL/PGlite: store contract 7, restart keeps runtimes/phones/tokens/pending codes/audit, concurrent refresh → one 200 + one 401 and the device revoked, migrations idempotent and a newer schema refused, `DATABASE_URL` required in production), runtime 51 (new: runtime + phone survive a gateway restart on the same database) |
+| Built gateway (`dist/main.js`) on the `pg` driver over the PostgreSQL wire protocol (`pglite-socket` server, on-disk data) | first boot migrated (`applied: [1]`), runtime registered, phone paired, second code started; gateway killed and restarted → no migration, `/v1/devices` lists the phone, refresh 200, the code started before the restart completes (201), replaying the rotated refresh token revokes the phone; logs show `postgres://postgres:***@…` |
+
+Not verified: a PostgreSQL server (Docker's daemon did not answer in this session, so the wire-protocol run used
+PGlite behind `pglite-socket`), several gateway processes on one database.
 
 ## Verification log — 2026-11-13 (phase 6, runtime identity + Face ID)
 

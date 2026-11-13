@@ -108,6 +108,7 @@ beforeAll(async () => {
     {
       env: 'test', port, host: '127.0.0.1', publicUrl: gatewayUrl, secret: 'test-gateway-secret-0123456789abcdef0123456789',
       tls: null, trustProxy: false, pairingCodeTtlSeconds: 300, accessTokenTtlSeconds: 900, refreshTokenTtlSeconds: 3600, logLevel: 'error',
+      database: null, auditRetentionDays: 90,
     },
     createMemoryStore(),
     { logger: quiet },

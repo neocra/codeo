@@ -162,7 +162,12 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
       throw new GatewayError(403, 'FORBIDDEN', 'device revoked');
     }
     /* Rotate: the presented token is retired (kept until expiry for reuse detection), a new one is issued. */
-    await store.refreshTokens.markRotated(record.id, iso(now));
+    if (!(await store.refreshTokens.markRotated(record.id, iso(now)))) {
+      /* Another request rotated this token between the read above and now: same answer as a replay. */
+      await audit({ actor, action: 'auth.refresh.reuse', target: record.deviceId, ok: false, detail: `family=${record.familyId}; concurrent` });
+      await revokeDevice(record.deviceId, actor, 'refresh token reuse detected');
+      throw unauthenticated('refresh token reuse detected; device revoked');
+    }
     const creds = await issueCredentials(device, record.familyId);
     await store.devices.update(device.deviceId, { lastSeenAt: iso(now) });
     await audit({ actor: `device:${device.deviceId}`, action: 'auth.refresh', target: device.deviceId, ok: true, detail: `family=${record.familyId}` });

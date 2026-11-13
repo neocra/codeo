@@ -21,8 +21,9 @@ map between product spec §14 ("Remote connection architecture") and what the ph
   is a bounded in-memory ring of the last 2 000 runtime events per runtime, used for reconnection replay.
 - Runtimes connect **outbound** (`GET /v1/runtimes/:id/connect`). No inbound port is opened on the
   developer's machine, nothing is exposed to the LAN, and the runtime keeps binding to loopback.
-- All persistent state sits behind `GatewayStore` interfaces (`src/store.ts`). Phase 1 ships an in-memory
-  implementation; PostgreSQL replaces it without touching the services.
+- All persistent state sits behind `GatewayStore` interfaces (`src/store.ts`): PostgreSQL in production
+  (`src/postgres/`, `DATABASE_URL`, required when `NODE_ENV=production`), an in-memory store in development and
+  tests. The event ring stays in memory on purpose: it holds session content, which is never written to disk.
 
 ## 2. Assets and adversaries
 
@@ -109,9 +110,13 @@ runtime still only checks the `approval:decide` scope.
 
 ## 5. Not done yet (explicitly out of phase 1)
 
-- **PostgreSQL store.** `createMemoryStore()` loses everything on restart (registrations, pairings, refresh
-  tokens, audit). Implement `GatewayStore` on Postgres; `PairingCodeStore.consume` and
-  `RefreshTokenStore.markRotated` must be single-statement atomic updates. Rate limiters are per process.
+- **PostgreSQL store — done (phase 6, step 4).** Runtimes, devices, pairing codes, refresh tokens and audit
+  survive a restart. The decisions that matter are single conditional statements: `consume` is
+  `UPDATE … WHERE used_at IS NULL RETURNING`, `markRotated` is `UPDATE … WHERE rotated_at IS NULL` and returns
+  whether it won; a refresh that loses that race is handled as a replay (device revoked), exactly like a
+  rotated token presented again. Secrets are stored as sha256 hashes only (runtime secret, refresh tokens).
+  Migrations run at boot under an advisory lock and a gateway refuses a schema newer than itself. Still per
+  process: rate limiters and the relay (a runtime and its phones must reach the same instance).
 - **Push notifications (APNs/FCM).** No device-token storage, no dispatch of approval requests while the
   app is backgrounded. Payloads must stay content-free (ids only) when added.
 - **TLS termination guidance and pinning.** Production deployments should terminate TLS at a reverse
@@ -136,7 +141,13 @@ runtime still only checks the `approval:decide` scope.
 
 ## 6. Operational notes
 
-- Required env in production: `GATEWAY_SECRET` (≥ 32 chars), `PUBLIC_URL` (https). See `apps/gateway/.env.example`.
+- Required env in production: `GATEWAY_SECRET` (≥ 32 chars), `PUBLIC_URL` (https), `DATABASE_URL`
+  (`postgres://…`; TLS through `?sslmode=require`). See `apps/gateway/.env.example`. The password is masked in logs.
+- Keep `GATEWAY_SECRET` stable across restarts: the database keeps refresh tokens, but access tokens are signed
+  with this key, so a new key makes every phone refresh once (and a phone offline past its refresh token's
+  expiry pairs again).
+- Housekeeping runs every hour: used or expired pairing codes, expired refresh tokens and audit entries older
+  than `AUDIT_RETENTION_DAYS` (default 90) are deleted.
 - Without `GATEWAY_SECRET` in development an ephemeral secret is generated and a warning logged: every
   restart (including `tsx watch` reloads) invalidates all access tokens.
 - Close codes used by the relay: `4000` replaced by a newer runtime connection, `4001` hello timeout,

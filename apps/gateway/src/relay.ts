@@ -17,6 +17,8 @@ import type { AuthService, DeviceAuth } from './auth';
 import { iso, type Clock } from './clock';
 import { errorBody, toGatewayError } from './errors';
 import { SeqRingBuffer } from './ring-buffer';
+
+const errMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 import type { GatewayStore, RuntimeRecord } from './store';
 
 /*
@@ -194,7 +196,7 @@ export function createRelay(opts: RelayOptions): Relay {
     state.welcome = null;
     state.alive = true;
 
-    void store.runtimes.touch(runtime.runtimeId, iso(clock()));
+    store.runtimes.touch(runtime.runtimeId, iso(clock())).catch((err: unknown) => log.warn('runtime last-seen write failed', { runtimeId: runtime.runtimeId, err: errMessage(err) }));
     void audit({ actor, action: 'relay.runtime.connect', target: connId, ok: true, detail: `ip=${ip}` });
     log.info('runtime connected', { runtimeId: runtime.runtimeId, connId, devices: state.devices.size });
 
@@ -285,7 +287,7 @@ export function createRelay(opts: RelayOptions): Relay {
         sendToDevice(conn.socket, { kind: 'event', seq: e.seq, event: e.item });
       }
     }
-    void store.devices.update(conn.deviceId, { lastSeenAt: iso(clock()) });
+    store.devices.update(conn.deviceId, { lastSeenAt: iso(clock()) }).catch((err: unknown) => log.warn('device last-seen write failed', { deviceId: conn.deviceId, err: errMessage(err) }));
     await audit({ actor, action: 'relay.device.connect', target: conn.connId, ok: true, detail: `client=${msg.client.name}/${msg.client.version} kind=${msg.client.kind} afterSeq=${msg.afterSeq} ip=${conn.ip}` });
     log.info('device connected', { deviceId: conn.deviceId, runtimeId: conn.runtimeId, connId: conn.connId, afterSeq: msg.afterSeq });
   }

@@ -16,6 +16,13 @@ const EnvSchema = z.object({
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(30 * 24 * 60 * 60),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  /** PostgreSQL connection string. Unset: in-memory store (development and tests only). */
+  DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\//, 'DATABASE_URL must be a postgres:// or postgresql:// URL')
+    .optional(),
+  DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
 });
 
 export interface GatewayConfig {
@@ -32,6 +39,9 @@ export interface GatewayConfig {
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  /** PostgreSQL store; null = in-memory (everything is lost on restart). Never logged as is. */
+  database: { url: string; poolSize: number } | null;
+  auditRetentionDays: number;
 }
 
 export interface LoadConfigOptions {
@@ -69,6 +79,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, opts: LoadConfi
     throw new Error('PUBLIC_URL must use https:// in production');
   }
 
+  if (!e.DATABASE_URL) {
+    if (e.NODE_ENV === 'production') {
+      throw new Error('DATABASE_URL is required in production: the in-memory store loses every registration and pairing on restart');
+    }
+    if (e.NODE_ENV === 'development') {
+      opts.warn?.(
+        'DATABASE_URL is not set: using the in-memory store. Runtime registrations, paired devices and refresh tokens are lost on restart.',
+      );
+    }
+  }
+
   return {
     env: e.NODE_ENV,
     port: e.PORT,
@@ -81,5 +102,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, opts: LoadConfi
     accessTokenTtlSeconds: e.ACCESS_TOKEN_TTL_SECONDS,
     refreshTokenTtlSeconds: e.REFRESH_TOKEN_TTL_SECONDS,
     logLevel: e.LOG_LEVEL,
+    database: e.DATABASE_URL ? { url: e.DATABASE_URL, poolSize: e.DATABASE_POOL_SIZE } : null,
+    auditRetentionDays: e.AUDIT_RETENTION_DAYS,
   };
 }
