@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { View } from 'react-native';
 import type { ApprovalRequest, Task } from '@codeo/domain';
 import { ApprovalCard, StatusPill, Typo, useTheme } from '@codeo/ui-mobile';
+import { confirmDecision, DecisionNotConfirmedError } from '@/lib/biometrics';
 import { useT } from '@/lib/i18n';
 import { approvalKind, formatCountdown, providerLabel, riskLabel, riskTone } from '@/lib/presentation';
 import { useConnectedClient, useNow } from '@/lib/runtime';
@@ -16,7 +17,7 @@ export interface ApprovalInboxCardProps {
 
 const MAX_AFFECTED = 4;
 
-/** Binds the design's ApprovalCard to `approvals.resolve`. */
+/** Binds the design's ApprovalCard to `approvals.resolve`, behind Face ID / Touch ID (`confirmDecision`). */
 export function ApprovalInboxCard({ approval, task, compact = false }: ApprovalInboxCardProps) {
   const t = useT();
   const { theme } = useTheme();
@@ -25,7 +26,12 @@ export function ApprovalInboxCard({ approval, task, compact = false }: ApprovalI
   const now = useNow(1000);
 
   const resolve = useMutation({
-    mutationFn: (decision: 'approve' | 'reject') => getClient().request('approvals.resolve', { approvalId: approval.id, decision }),
+    mutationFn: async (decision: 'approve' | 'reject') => {
+      /* The connection is checked first: no point asking for Face ID when the decision cannot be sent. */
+      const client = getClient();
+      await confirmDecision(t);
+      return client.request('approvals.resolve', { approvalId: approval.id, decision });
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['approvals.list'] });
       void queryClient.invalidateQueries({ queryKey: ['home.summary'] });
@@ -58,6 +64,10 @@ export function ApprovalInboxCard({ approval, task, compact = false }: ApprovalI
       rejectedLabel={t('approvals.rejected')}
       expiredLabel={approval.status === 'cancelled' ? t('status.cancelled') : t('approvals.expired')}
       errorLabel={t('error.generic')}
+      formatError={(err) =>
+        /* Not confirmed on the phone is not a failure: say plainly that nothing was sent. */
+        err instanceof DecisionNotConfirmedError ? err.message : `${t('error.generic')} ${err instanceof Error ? err.message : String(err)}`
+      }
       resolved={resolved}
       onApprove={async () => {
         await resolve.mutateAsync('approve');

@@ -1,8 +1,24 @@
 # Progress
 
-_Updated: 2026-11-12_
+_Updated: 2026-11-13_
 
 ## Current milestone: Phase 6 — remote access (in progress)
+
+### Phase 6, step 3: runtime identity + Face ID on approvals (done; verified in the iOS simulator except a Face ID match)
+- Runtime identity key (Ed25519, `apps/runtime/src/remote/identity.ts`), kept in `settings` (`remoteIdentity`) across
+  gateway registrations. `remote.status` and `remote.pairingStart` return its `fingerprint`; the runtime adds the public
+  key to the QR payload (`key`) after the gateway built it. Contracts: `identity.ts` (schemas, signed message,
+  `formatFingerprint`), command `remote.identity` (`read`, signs a 32-byte challenge).
+- `@codeo/remote-client`: `runtimeIdentityCheck` (pure JS, `@noble/curves` + `@noble/hashes`, random bytes from the
+  caller), `RuntimeClientOptions.verify` run after every `welcome` before `connected` (events held meanwhile), new
+  terminal state `untrusted`. Credentials keep `runtimeKey` + `runtimeKeySource` (`qr` / `first-use`);
+  `GatewaySession.pinRuntimeKey` persists after a refresh in flight, and a refresh keeps the pinned key.
+- Gateway: device sockets are closed (4004) when the runtime connection closes or is replaced, so phones reconnect and
+  prove the runtime again (found in the simulator: a runtime restarted with another key kept the phone's session).
+- Mobile: identity check on every gateway connection (`expo-crypto` for randomness), "Runtime non reconnu" state with
+  "Jumeler à nouveau", fingerprint + its origin in Plus → Accès distant. Approve and reject ask for Face ID / Touch ID
+  (passcode fallback, `expo-local-authentication`); cancelled = nothing sent, the card says so without "error".
+- Desktop: fingerprint next to the pairing QR code and in Settings → Remote access.
 
 ### Phase 6, step 2: mobile pairing by QR (done and verified in the iOS simulator; camera scan not exercised)
 - `@codeo/remote-client` gateway transport (`src/gateway.ts`): `parsePairingQr` (zod, `{v:1, gateway, code, runtimeId,
@@ -144,8 +160,8 @@ _Updated: 2026-11-12_
 - Remote access: mobile pairing was run in the iOS simulator with a code typed by hand; the camera scan of the desktop's
   QR code and a physical phone (keychain, network changes) are not verified yet. Gateway registrations live in the gateway's memory
   store, so a gateway restart means turning remote access on again (the runtime then reports `unauthorized`, the phone
-  ends in `unauthorized` once its refresh token is gone). No certificate pinning, no push notifications, no Face ID gate
-  on approvals. "Forget this pairing" on the phone does not revoke it on the gateway (revoke from the desktop).
+  ends in `unauthorized` once its refresh token is gone). No certificate pinning, no push notifications; the runtime proves its identity at
+  connection time but frames are not signed end to end, and Face ID is enforced by the app only. "Forget this pairing" on the phone does not revoke it on the gateway (revoke from the desktop).
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
@@ -157,8 +173,18 @@ _Updated: 2026-11-12_
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
-1. Scan the desktop's QR code from a physical phone, then phase 6, step 3: Face ID / Touch ID before `approval:decide`, and the runtime signing its `welcome` (key continuity).
+1. Scan the desktop's QR code from a physical phone (QR pairing pins the runtime key; Face ID match on a real device).
 2. Demo mode dataset, clearly separated from live data (open PR neocra/codeo#10 needs a rebase).
+
+## Verification log — 2026-11-13 (phase 6, runtime identity + Face ID)
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck` / `pnpm lint` | pass |
+| `pnpm test` | all pass: remote-client 18 (identity: valid proof, fresh challenge each time, replayed proof, other key, claimed key without its private key, malformed answer, first use, fingerprint = runtime's; pinned key survives a refresh in flight; QR key pinned at pairing), runtime remote e2e 10 (key in the QR code and same fingerprint on both sides, proof on connect, first-use pin, wrong key → `untrusted` and no request possible, proof for another runtime id refused), gateway 32 (a replaced runtime connection closes its devices with 4004) |
+| iOS simulator (iPhone 15 Pro, Expo Go SDK 54) + local gateway + runtime on a throwaway dir with a scripted agent | code typed by hand → connected, fingerprint pinned on first use and equal to the runtime's (`Plus → Accès distant`); app relaunched and runtime restarted → reconnects and proves again; Approve and Reject each open the system prompt "Confirmer la décision", cancelling sends nothing (the runtime received no decision) and the card says "Décision annulée : rien n'a été envoyé."; runtime restarted with another identity key → the gateway drops the phone, the phone reconnects and ends in "Runtime non reconnu" with "Jumeler à nouveau". The captures caught three defects, fixed: the fingerprint was truncated in Plus (now on its own line), a cancelled prompt was shown as "Une erreur est survenue.", and the gateway kept the phone's socket open across a runtime restart, so the new runtime was never challenged |
+
+Not verified: a successful Face ID match (the simulator's Face ID enrollment could not be driven from this session; the passcode fallback was shown instead, and the decision path after a confirmed prompt is the same `approvals.resolve` the e2e test covers), QR pairing with the camera, a physical phone.
 
 ## Verification log — 2026-11-12 (phase 6, mobile pairing)
 

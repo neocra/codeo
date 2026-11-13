@@ -4,7 +4,8 @@ import type { ProviderStatus } from '@codeo/domain';
 import { buildApp, type GatewayApp } from '@codeo/gateway';
 import { createMemoryStore } from '@codeo/gateway/src/store';
 import { git } from '@codeo/git';
-import { RuntimeClient } from '@codeo/remote-client';
+import { RuntimeClient, parsePairingQr, runtimeFingerprint, runtimeIdentityCheck, type ConnectionState, type RuntimeClientOptions } from '@codeo/remote-client';
+import { randomBytes } from 'node:crypto';
 import { createLogger } from '@codeo/shared-utils';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -81,9 +82,10 @@ async function startGateway(): Promise<GatewayApp> {
   return built;
 }
 
-function phone(accessToken: string): RuntimeClient {
+function phone(accessToken: string, verify?: RuntimeClientOptions['verify']): RuntimeClient {
   const url = gatewayUrl.replace('http:', 'ws:') + '/v1/devices/connect';
   return new RuntimeClient({
+    ...(verify ? { verify } : {}),
     url,
     token: accessToken,
     client: { name: 'phone', version: '0', kind: 'mobile' },
@@ -212,6 +214,66 @@ describe('remote access through the gateway', () => {
     await client.connect();
     expect((await client.request('home.summary', {})).workspace?.name).toBe('Remote');
     client.close();
+  });
+});
+
+describe('runtime identity (key continuity)', () => {
+  it('puts the runtime key in the QR code and proves it on every connection', async () => {
+    const pairing = await runtime.call('remote.pairingStart', {}, LOCAL);
+    const qr = parsePairingQr(pairing.qrPayload);
+    expect(qr.key).toMatch(/^[0-9a-f]{64}$/);
+    /* Desktop and phone compute the same fingerprint from the same key. */
+    expect(runtimeFingerprint(qr.key!)).toBe(pairing.fingerprint);
+    expect(pairing.fingerprint).toMatch(/^([0-9A-F]{4} ){4}[0-9A-F]{4}$/);
+    expect(runtime.services.remote.status().fingerprint).toBe(pairing.fingerprint);
+
+    const { accessToken } = await pairPhone();
+    const runtimeId = runtime.services.remote.status().runtimeId!;
+    let checks = 0;
+    const check = runtimeIdentityCheck({ runtimeId, pinnedKey: () => qr.key!, onFirstUse: () => undefined, randomBytes: (n) => randomBytes(n) });
+    const client = phone(accessToken, async (request) => {
+      checks++;
+      await check(request);
+    });
+    await client.connect();
+    expect(checks).toBe(1);
+    expect(client.state).toBe('connected');
+    client.close();
+  });
+
+  it('pins the key on first use when the code was typed by hand', async () => {
+    const { accessToken } = await pairPhone();
+    const runtimeId = runtime.services.remote.status().runtimeId!;
+    let pinned: string | null = null;
+    const client = phone(accessToken, runtimeIdentityCheck({
+      runtimeId, pinnedKey: () => pinned, onFirstUse: (k) => { pinned = k; }, randomBytes: (n) => randomBytes(n),
+    }));
+    await client.connect();
+    expect(runtimeFingerprint(pinned!)).toBe(runtime.services.remote.status().fingerprint);
+    client.close();
+  });
+
+  it('refuses a runtime whose key is not the pinned one, and never reconnects to it', async () => {
+    const { accessToken } = await pairPhone();
+    const runtimeId = runtime.services.remote.status().runtimeId!;
+    const states: ConnectionState[] = [];
+    const client = phone(accessToken, runtimeIdentityCheck({
+      runtimeId, pinnedKey: () => 'ab'.repeat(32), onFirstUse: () => undefined, randomBytes: (n) => randomBytes(n),
+    }));
+    client.on('state', (s) => states.push(s));
+    await expect(client.connect()).rejects.toThrow(/key changed/);
+    expect(client.state).toBe('untrusted');
+    expect(states).not.toContain('connected');
+    await expect(client.request('runtime.info', {})).rejects.toThrow(/not connected/);
+  });
+
+  it('refuses a proof made for another runtime id', async () => {
+    const { accessToken } = await pairPhone();
+    const client = phone(accessToken, runtimeIdentityCheck({
+      runtimeId: 'rt_someone_else', pinnedKey: () => null, onFirstUse: () => undefined, randomBytes: (n) => randomBytes(n),
+    }));
+    await expect(client.connect()).rejects.toThrow(/another runtime/);
+    expect(client.state).toBe('untrusted');
   });
 });
 

@@ -187,6 +187,7 @@ export function createRelay(opts: RelayOptions): Relay {
       const old = state.socket;
       state.socket = null;
       closeSocket(old, CLOSE_REPLACED, 'replaced by a newer runtime connection');
+      dropDevices(state);
     }
     state.socket = socket;
     state.connId = connId;
@@ -217,8 +218,20 @@ export function createRelay(opts: RelayOptions): Relay {
       state.welcome = null;
       void audit({ actor, action: 'relay.runtime.disconnect', target: connId, ok: true, detail: `code=${code} reason=${String(reason)}` });
       log.info('runtime disconnected', { runtimeId: runtime.runtimeId, connId, code });
-      for (const dev of state.devices.values()) sendToDevice(dev.socket, { kind: 'error', message: 'runtime offline' });
+      dropDevices(state);
     });
+  }
+
+  /**
+   * The runtime behind these devices went away (or another connection took its place): close their sockets
+   * so each phone reconnects and asks the runtime that answers now to prove its identity again
+   * (docs/security/remote-access.md §5). A phone never keeps a session across two runtime connections.
+   */
+  function dropDevices(state: RuntimeState): void {
+    for (const dev of state.devices.values()) {
+      sendToDevice(dev.socket, { kind: 'error', message: 'runtime offline' });
+      closeSocket(dev.socket, CLOSE_RUNTIME_OFFLINE, 'runtime offline');
+    }
   }
 
   /* ---------------------------------------------------------------- */

@@ -221,6 +221,30 @@ describe('access-token refresh', () => {
     expect(stored).toHaveLength(2);
   });
 
+  it('keeps a key pinned on first use across a refresh in flight, and persists the newest tokens last', async () => {
+    const creds = await pair();
+    expect(creds.runtimeKey).toBeUndefined();
+    const stored: GatewayCredentials[] = [];
+    const session = new GatewaySession({ credentials: creds, onCredentials: (c) => void stored.push(c) });
+    const refreshing = session.accessToken({ force: true });
+    const key = 'cd'.repeat(32);
+    await Promise.all([refreshing, session.pinRuntimeKey(key)]);
+    expect(session.credentials).toMatchObject({ runtimeKey: key, runtimeKeySource: 'first-use' });
+    expect(session.credentials.refreshToken).not.toBe(creds.refreshToken);
+    expect(stored.at(-1)).toEqual(session.credentials);
+    /* Pinned once: a later key is never accepted silently. */
+    await session.pinRuntimeKey('ef'.repeat(32));
+    expect(session.credentials.runtimeKey).toBe(key);
+  });
+
+  it('pins the QR code key at pairing', async () => {
+    const qr = parsePairingQr(JSON.stringify({ ...JSON.parse((await startPairing()).qrPayload), key: 'ab'.repeat(32) }));
+    const creds = await completePairing({ gatewayUrl: qr.gateway, code: qr.code, nonce: qr.nonce, runtimeId: qr.runtimeId, runtimeKey: qr.key, device: { name: 'iPhone', platform: 'ios' } });
+    expect(creds).toMatchObject({ runtimeKey: 'ab'.repeat(32), runtimeKeySource: 'qr' });
+    const another = JSON.parse((await startPairing()).qrPayload) as object;
+    expect(() => parsePairingQr(JSON.stringify({ ...another, key: 'not-hex' }))).toThrow();
+  });
+
   it('treats a replayed refresh token as theft: the phone is revoked and the error is fatal', async () => {
     const creds = await pair();
     const rotated = await refreshCredentials(creds);

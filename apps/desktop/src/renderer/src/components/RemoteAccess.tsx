@@ -68,6 +68,11 @@ function PairingPanel({ pairing, onDone }: { pairing: RemotePairing; onDone: () 
             {pairing.code.slice(0, 3)} {pairing.code.slice(3)}
           </div>
         </div>
+        <div>
+          <div className="cd-field__label">{t('remote.fingerprint')}</div>
+          <div className="cd-key cd-body-sm">{pairing.fingerprint}</div>
+          <div className="cd-body-sm cd-faint">{t('remote.pairing.fingerprintHint')}</div>
+        </div>
         {expired ? (
           <Banner tone="warn">{t('remote.pairing.expired')}</Banner>
         ) : (
@@ -177,6 +182,11 @@ export function RemoteAccess() {
         </StatusPill>
         {s?.runtimeId ? <span className="cd-body-sm cd-faint cd-key">{s.runtimeId}</span> : null}
       </div>
+      {s?.fingerprint ? (
+        <div className="cd-body-sm cd-muted">
+          {t('remote.fingerprint')} <span className="cd-key">{s.fingerprint}</span>
+        </div>
+      ) : null}
       {s?.lastError && connection !== 'connected' ? <Banner tone={connection === 'unauthorized' ? 'error' : 'warn'}>{s.lastError}</Banner> : null}
 
       <form

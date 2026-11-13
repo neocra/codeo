@@ -50,7 +50,7 @@ still holds unexpired tokens.
 | **Token rotation** | Refresh tokens are opaque 256-bit random strings; only their sha256 is stored. `POST /v1/auth/refresh` retires the presented token (kept until expiry, flagged `rotatedAt`) and issues a new pair in the same *family*. | `auth.ts` (`refresh`) |
 | **Replay protection** | Presenting a refresh token that was already rotated is treated as theft: the **whole device is revoked**, every refresh token of the device is deleted, an `auth.refresh.reuse` audit entry is written, and the still-valid access token is refused at the edge. Request ids on the relay are prefixed per connection so a response can only go back to the socket that asked. Events carry the runtime's monotonic `seq`; the relay drops duplicates and never delivers a seq twice to the same device. | `auth.ts`, `relay.ts` |
 | **Device revocation** | `POST /v1/devices/:id/revoke` (runtime-authenticated, scoped to its own devices — foreign devices are "not found"). Revocation marks the record, drops refresh tokens, closes every live socket of the device (close code 4003) and is re-checked **on every relayed request**, so an unexpired access token stops working immediately. | `auth.ts` (`revokeDevice`), `relay.ts` |
-| **Runtime identity verification** | Runtimes register once (`POST /v1/runtimes/register`) and receive a self-describing secret `<runtimeId>.<random>`; only its sha256 is stored, the secret is shown once. Every runtime action (pairing start, device listing, revocation, relay connect) requires it as `Authorization: Bearer`, and the relay rejects a runtime that presents a valid secret for a different `:id` (403). Devices are bound to one `runtimeId` in both the record and the token; a token for runtime A cannot be used on runtime B. The phone verifies the *gateway* through TLS; verifying the runtime end-to-end (key continuity) is future work — see §5. | `routes.ts`, `auth.ts`, `relay.ts` |
+| **Runtime identity verification** | Runtimes register once (`POST /v1/runtimes/register`) and receive a self-describing secret `<runtimeId>.<random>`; only its sha256 is stored, the secret is shown once. Every runtime action (pairing start, device listing, revocation, relay connect) requires it as `Authorization: Bearer`, and the relay rejects a runtime that presents a valid secret for a different `:id` (403). Devices are bound to one `runtimeId` in both the record and the token; a token for runtime A cannot be used on runtime B. The phone verifies the *gateway* through TLS; the phone also verifies the *runtime* on every connection — see "Runtime identity" below. | `routes.ts`, `auth.ts`, `relay.ts` |
 | **Connection recovery** | Both sides are heartbeat-pinged every 30 s and terminated when silent. Devices reconnect with `afterSeq`; the relay replays from its per-runtime ring (last 2 000 events). If the requested window was evicted, or the gateway restarted with an empty ring, the device gets an `error` frame starting with `replay-gap` and must re-query state (the `RuntimeClient` surfaces it as an `error` event). A reconnecting runtime receives a `hello` with the gateway's own `afterSeq` so it can backfill the ring. A newer runtime connection replaces the older one (close 4000). | `relay.ts`, `ring-buffer.ts` |
 | **WebSocket streaming** | Standard runtime protocol (`@codeo/contracts`): device frames are validated as `ClientMessage`, runtime frames as `ServerMessage`; anything else is dropped. Max frame 4 MiB. Pings are answered by the gateway; a `hello` must arrive within 5 s. | `relay.ts` |
 | **Command authorization with scopes** | Paired devices get `['read','session:write','approval:decide']`; `workspace:admin` is never granted remotely. For every request the relay looks up `commands[command].scope` and refuses with `FORBIDDEN` **before** the runtime sees anything when the device lacks it. Scopes come from the device record (source of truth) intersected with the token; narrowing a device's scopes takes effect on its next request. | `relay.ts`, `auth.ts` |
@@ -73,6 +73,40 @@ runtime protocol over the outbound socket, playing the *server* role:
    has already enforced — the runtime may additionally re-check scopes using the `gateway` client kind.
 5. Events are pushed as `event` frames; the gateway buffers and fans them out.
 
+## 4b. Runtime identity and approval confirmation (phase 6, step 3)
+
+**Key continuity.** Each runtime holds an Ed25519 key pair (`apps/runtime/src/remote/identity.ts`), created the
+first time remote access is turned on and kept across gateway registrations; the private key stays in the local
+database next to the runtime secret. The runtime adds its public key (`key`, 32-byte hex) to the pairing QR payload
+*after* the gateway built it — the desktop renders that payload itself, so a gateway cannot swap the key. The
+desktop shows the key's fingerprint (`formatFingerprint`: first 10 bytes of sha256, `A1B2 C3D4 E5F6 0718 293A`)
+next to the QR code and in Settings.
+
+On every connection through the gateway, before the app may send anything, the phone sends `remote.identity`
+with 32 fresh random bytes; the runtime signs `codeo-runtime-identity/v1\n<runtimeId>\n<challenge>` and the phone
+verifies the signature (`@noble/curves`, strict RFC 8032) and compares the key with the pinned one
+(`packages/remote-client/src/identity.ts`, `RuntimeClientOptions.verify`). Events replayed meanwhile are held
+back and dropped if the check fails. A wrong key, a bad signature or a proof for another runtime id ends in the
+terminal `untrusted` state: nothing is sent, nothing reconnects, the phone asks to pair again.
+
+- QR pairing pins the key from the QR code (`runtimeKeySource: 'qr'`). A code typed by hand pins the key of the
+  first proof (`'first-use'`), and the phone shows the fingerprint to compare with the desktop.
+- The gateway closes every device socket (4004) when its runtime connection closes or is replaced, so a phone
+  never keeps a session across two runtime connections: someone who stole the runtime secret and connects in its
+  place is challenged by every phone, and fails.
+- Why a challenge and not a signed `welcome`: the gateway caches the runtime's `welcome` and builds the one it
+  sends to devices, so a signed `welcome` could be replayed by the gateway long after the runtime is gone.
+
+What it does **not** give: the proof authenticates the runtime at connection time, not each frame afterwards. A
+compromised gateway can still relay the proof to the real runtime and then alter the traffic (no end-to-end
+encryption or per-request signatures yet).
+
+**Approval confirmation.** On the phone, approving *or* rejecting an approval asks for Face ID / Touch ID first,
+with the device passcode as the system's own fallback (`apps/mobile/lib/biometrics.ts`, expo-local-authentication).
+Nothing is sent until the person is confirmed; a cancelled prompt leaves the approval pending ("Décision annulée :
+rien n'a été envoyé"), and a phone with no lock at all cannot decide approvals. This is a client-side gate: the
+runtime still only checks the `approval:decide` scope.
+
 ## 5. Not done yet (explicitly out of phase 1)
 
 - **PostgreSQL store.** `createMemoryStore()` loses everything on restart (registrations, pairings, refresh
@@ -89,11 +123,10 @@ runtime protocol over the outbound socket, playing the *server* role:
   single-flight `GatewaySession` per device so a rotated token is never presented twice by the phone itself
   (`packages/remote-client/src/gateway.ts`). A refused refresh is terminal (`unauthorized`), never a retry loop.
   Plain HTTP is refused except towards this machine. Forgetting the pairing on the phone does not revoke it server-side.
-- **Runtime identity end-to-end.** The phone trusts the gateway's statement of which runtime it talks
-  to. The device `publicKey` accepted at pairing is stored but unused; a later phase should let the runtime
-  sign its `welcome` with a key fingerprint shown during pairing, and let devices sign requests.
-- **Biometric gating on mobile.** Approval decisions (`approval:decide`) should require Face ID / Touch ID
-  on the phone before the request is sent. Server-side the scope exists; the client-side gate does not.
+- **End-to-end channel.** The runtime proves its identity at connection time (§4b) but frames are not
+  signed or encrypted end to end, and the device `publicKey` accepted at pairing is still unused: devices do not
+  sign their requests, so the runtime cannot tell a phone's decision from one forged by the gateway.
+- **Server-side proof of the biometric check.** Face ID is enforced by the app only (§4b).
 - **Account system.** `ownerAccountId` is a free-form identifier generated at registration. Multi-user
   authorization (who may register a runtime, who may list devices) waits for accounts.
 - **Gateway HMAC secret rotation and multi-instance deployment.** One static `GATEWAY_SECRET`; no key ids,

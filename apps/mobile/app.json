@@ -27,6 +27,12 @@
       "expo-font",
       "expo-secure-store",
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Codeo Remote asks for Face ID before sending an approval decision to your computer."
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "Codeo Remote uses the camera to scan the pairing QR code shown by Codeo on your computer.",
