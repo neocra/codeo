@@ -26,3 +26,12 @@ export {
   type GatewaySessionOptions,
   type PairingQr,
 } from './gateway';
+export {
+  RuntimeIdentityError,
+  isRuntimePublicKey,
+  runtimeFingerprint,
+  runtimeIdentityCheck,
+  type RuntimeIdentityCheckOptions,
+  type RuntimeIdentityErrorCode,
+  type VerifyRequest,
+} from './identity';

@@ -3,6 +3,7 @@ import type { SettingsRepo } from '@codeo/database';
 import type { Logger } from '@codeo/shared-utils';
 import type { EventBus } from '../event-bus';
 import { createGatewayApi, GatewayHttpError, relayUrl, type GatewayApi } from '../remote/gateway-api';
+import { RuntimeIdentity } from '../remote/identity';
 import { RelayClient, type RelayState } from '../remote/relay-client';
 import type { Runtime } from '../runtime';
 
@@ -15,6 +16,8 @@ interface StoredRemote {
 }
 
 const SETTINGS_KEY = 'remote';
+/* Separate from the registration: the identity outlives gateway changes so phones keep their pinned key. */
+const IDENTITY_KEY = 'remoteIdentity';
 const EMPTY: StoredRemote = { enabled: false, gatewayUrl: null, runtimeId: null, runtimeSecret: null };
 
 export interface RemoteServiceOptions {
@@ -33,6 +36,7 @@ export class RemoteService {
   private relayState: RelayState = { connection: 'offline', error: null };
   private connectedAt: string | null = null;
   private runtime: Pick<Runtime, 'info' | 'bus' | 'call'> | null = null;
+  private identity: RuntimeIdentity | null = null;
   private readonly makeApi: (gatewayUrl: string) => GatewayApi;
 
   constructor(
@@ -49,6 +53,8 @@ export class RemoteService {
   async init(runtime: Pick<Runtime, 'info' | 'bus' | 'call'>): Promise<void> {
     this.runtime = runtime;
     this.stored = { ...EMPTY, ...(await this.settings.get<Partial<StoredRemote>>(SETTINGS_KEY, {})) };
+    this.identity = RuntimeIdentity.load(await this.settings.get<unknown>(IDENTITY_KEY, null));
+    if (this.stored.enabled && !this.identity) await this.ensureIdentity();
     if (this.stored.enabled && this.credentials()) this.startRelay();
   }
 
@@ -61,6 +67,7 @@ export class RemoteService {
       connection: enabled ? this.relayState.connection : 'disabled',
       connectedAt: enabled && this.relayState.connection === 'connected' ? this.connectedAt : null,
       lastError: enabled ? this.relayState.error : null,
+      fingerprint: this.identity?.fingerprint ?? null,
     };
   }
 
@@ -69,6 +76,7 @@ export class RemoteService {
     /* A new gateway, no registration yet, or a secret the gateway refused: register (again). */
     const mustRegister = url !== this.stored.gatewayUrl || !this.credentials() || this.relayState.connection === 'unauthorized';
     await this.stopRelay();
+    await this.ensureIdentity();
     if (mustRegister) {
       let reg;
       try {
@@ -95,9 +103,33 @@ export class RemoteService {
     return this.status();
   }
 
+  /**
+   * The gateway builds the pairing; the runtime adds its public key to the QR payload. The desktop renders
+   * that payload itself, so the key reaches the phone without the gateway being able to swap it.
+   */
   async startPairing(): Promise<RemotePairing> {
     const { api, secret } = this.requireEnabled();
-    return this.guard(() => api.startPairing(secret));
+    const identity = await this.ensureIdentity();
+    const pairing = await this.guard(() => api.startPairing(secret));
+    let payload: unknown;
+    try {
+      payload = JSON.parse(pairing.qrPayload);
+    } catch {
+      throw new RuntimeError('INTERNAL', 'Réponse inattendue de la passerelle pour le jumelage');
+    }
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+      throw new RuntimeError('INTERNAL', 'Réponse inattendue de la passerelle pour le jumelage');
+    }
+    return { ...pairing, qrPayload: JSON.stringify({ ...payload, key: identity.publicKey }), fingerprint: identity.fingerprint };
+  }
+
+  /** Signs a paired phone's challenge so it can check it reached the runtime it was paired with. */
+  async proveIdentity(challenge: string) {
+    const runtimeId = this.stored.runtimeId;
+    if (!this.stored.enabled || !runtimeId || !this.identity) {
+      throw localizedError('CONFLICT', 'remote.disabled', undefined, 'Activez d’abord l’accès distant.');
+    }
+    return this.identity.prove(runtimeId, challenge);
   }
 
   async devices(): Promise<PairedDevice[]> {
@@ -112,6 +144,15 @@ export class RemoteService {
 
   async shutdown(): Promise<void> {
     await this.stopRelay();
+  }
+
+  private async ensureIdentity(): Promise<RuntimeIdentity> {
+    if (this.identity) return this.identity;
+    const identity = RuntimeIdentity.generate();
+    await this.settings.set(IDENTITY_KEY, identity.stored);
+    this.identity = identity;
+    this.log.info('runtime identity key created', { fingerprint: identity.fingerprint });
+    return identity;
   }
 
   private credentials(): { gatewayUrl: string; runtimeId: string; secret: string } | null {

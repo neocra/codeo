@@ -1,4 +1,4 @@
-import { PairedDeviceSchema, RemotePairingSchema, RuntimeError, type PairedDevice, type RemotePairing } from '@codeo/contracts';
+import { PairedDeviceSchema, RemotePairingSchema, RuntimeError, type PairedDevice } from '@codeo/contracts';
 import { z } from 'zod';
 
 /*
@@ -15,6 +15,10 @@ const RegisterResponseSchema = z.object({
 });
 export type GatewayRegistration = z.infer<typeof RegisterResponseSchema>;
 
+/** What the gateway returns; the runtime adds its own key and fingerprint (`RemoteService.startPairing`). */
+const GatewayPairingSchema = RemotePairingSchema.omit({ fingerprint: true });
+export type GatewayPairing = z.infer<typeof GatewayPairingSchema>;
+
 const ErrorBodySchema = z.object({ error: z.object({ code: z.string(), message: z.string() }) });
 
 /** The gateway answered with a status that tells something about our credentials or input. */
@@ -30,7 +34,7 @@ export class GatewayHttpError extends Error {
 
 export interface GatewayApi {
   register(input: { name: string; platform: 'darwin' | 'win32' | 'linux' }): Promise<GatewayRegistration>;
-  startPairing(secret: string): Promise<RemotePairing>;
+  startPairing(secret: string): Promise<GatewayPairing>;
   listDevices(secret: string): Promise<PairedDevice[]>;
   revokeDevice(secret: string, deviceId: string): Promise<{ deviceId: string; revoked: boolean }>;
 }
@@ -81,7 +85,7 @@ export function createGatewayApi(gatewayUrl: string, fetchImpl: typeof fetch = f
 
   return {
     register: (input) => call('POST', '/v1/runtimes/register', RegisterResponseSchema, { body: input }),
-    startPairing: (secret) => call('POST', '/v1/pairing/start', RemotePairingSchema, { secret }),
+    startPairing: (secret) => call('POST', '/v1/pairing/start', GatewayPairingSchema, { secret }),
     listDevices: async (secret) => (await call('GET', '/v1/devices', z.object({ devices: z.array(PairedDeviceSchema) }), { secret })).devices,
     revokeDevice: (secret, deviceId) =>
       call('POST', `/v1/devices/${encodeURIComponent(deviceId)}/revoke`, z.object({ deviceId: z.string(), revoked: z.boolean() }), { secret }),

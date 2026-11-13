@@ -60,7 +60,7 @@ export default function PairScreen() {
     busy.current = true;
     try {
       const qr = parsePairingQr(data);
-      void pair({ gatewayUrl: qr.gateway, code: qr.code, nonce: qr.nonce, runtimeId: qr.runtimeId });
+      void pair({ gatewayUrl: qr.gateway, code: qr.code, nonce: qr.nonce, runtimeId: qr.runtimeId, runtimeKey: qr.key });
     } catch (err) {
       busy.current = false;
       setStep({ kind: 'error', message: describe(err) });

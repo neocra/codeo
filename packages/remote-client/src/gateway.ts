@@ -1,3 +1,4 @@
+import { RuntimePublicKeySchema } from '@codeo/contracts';
 import { z } from 'zod';
 
 /**
@@ -72,6 +73,8 @@ export const PairingQrSchema = z.object({
   code: z.string().regex(/^\d{6}$/),
   runtimeId: z.string().min(3).max(80),
   nonce: z.string().min(8).max(64),
+  /** The runtime's identity key, added by the runtime itself (absent from codes of older runtimes). */
+  key: RuntimePublicKeySchema.optional(),
 });
 export type PairingQr = z.infer<typeof PairingQrSchema>;
 
@@ -115,6 +118,10 @@ export const GatewayCredentialsSchema = z.object({
   /** ISO-8601. */
   accessTokenExpiresAt: z.string(),
   refreshToken: z.string(),
+  /** The runtime identity key this phone checks on every connection (absent until known). */
+  runtimeKey: RuntimePublicKeySchema.optional(),
+  /** `qr`: read from the pairing QR code. `first-use`: accepted on the first connection, to compare with the desktop. */
+  runtimeKeySource: z.enum(['qr', 'first-use']).optional(),
 });
 export type GatewayCredentials = z.infer<typeof GatewayCredentialsSchema>;
 
@@ -164,6 +171,8 @@ export interface CompletePairingInput extends HttpOptions {
   /** From the QR code; omitted for a code typed by hand. */
   nonce?: string | undefined;
   runtimeId?: string | undefined;
+  /** From the QR code: pinned right away, so the first connection is already verified. */
+  runtimeKey?: string | undefined;
   device: { name: string; platform: 'ios' | 'android' };
 }
 
@@ -199,6 +208,7 @@ export async function completePairing(input: CompletePairingInput): Promise<Gate
     accessToken: c.accessToken,
     accessTokenExpiresAt: c.accessTokenExpiresAt,
     refreshToken: c.refreshToken,
+    ...(input.runtimeKey !== undefined ? { runtimeKey: input.runtimeKey, runtimeKeySource: 'qr' as const } : {}),
   };
 }
 
@@ -260,6 +270,15 @@ export class GatewaySession {
     return this.creds;
   }
 
+  /** Pins the runtime key accepted on first use, and persists it with the current (possibly rotated) tokens. */
+  async pinRuntimeKey(runtimeKey: string): Promise<void> {
+    /* Persist after a refresh in flight, never concurrently: the keychain must end with the newest tokens. */
+    if (this.inflight) await this.inflight.catch(() => undefined);
+    if (this.creds.runtimeKey !== undefined) return;
+    this.creds = { ...this.creds, runtimeKey, runtimeKeySource: 'first-use' };
+    await this.opts.onCredentials(this.creds);
+  }
+
   /** The device WebSocket URL for these credentials. */
   get connectUrl(): string {
     return deviceConnectUrl(this.creds.gatewayUrl);
@@ -286,9 +305,11 @@ export class GatewaySession {
           const next = await refreshCredentials(this.creds, this.opts);
           /* The old refresh token is retired now: keep the new one in memory whatever happens, then persist
            * before handing out the access token, so the keychain holds the only token still valid. */
-          this.creds = next;
-          await this.opts.onCredentials(next);
-          return next;
+          /* A key pinned while the refresh was in flight must survive it. */
+          const pinned = this.creds.runtimeKey !== undefined ? { runtimeKey: this.creds.runtimeKey, ...(this.creds.runtimeKeySource ? { runtimeKeySource: this.creds.runtimeKeySource } : {}) } : {};
+          this.creds = { ...next, ...pinned };
+          await this.opts.onCredentials(this.creds);
+          return this.creds;
         } finally {
           this.inflight = null;
         }

@@ -195,10 +195,15 @@ describe('runtime lifecycle', () => {
     expect((await closed).code).toBe(CLOSE_RUNTIME_OFFLINE);
   });
 
-  it('a newer runtime connection replaces the previous one', async () => {
+  it('a newer runtime connection replaces the previous one and drops its devices', async () => {
+    /* Phones must reconnect and ask the new connection to prove the runtime identity again. */
+    const device = await pairDevice(ctx, runtimeSecret, 'watcher');
+    const { ws: deviceWs } = await connectDevice(device);
+    const deviceClosed = waitClose(deviceWs);
     const replaced = waitClose(runtimeWs);
     const fresh = await connectFakeRuntime();
     expect((await replaced).code).toBe(4000);
+    expect((await deviceClosed).code).toBe(CLOSE_RUNTIME_OFFLINE);
     expect(ctx.relay.isRuntimeConnected(runtimeId)).toBe(true);
     runtimeWs = fresh.ws;
     runtimeReader = fresh.reader;

@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import type { Locale } from '@codeo/i18n';
+import { runtimeFingerprint } from '@codeo/remote-client';
 import { Button, Card, Divider, FilterPills, Section, StatusPill, Typo, useTheme } from '@codeo/ui-mobile';
 import { Field } from '@/components/Field';
 import { Screen } from '@/components/Screen';
@@ -75,9 +76,9 @@ export default function MoreScreen() {
                 </Typo>
                 <StatusPill tone={connectionTone(state)} label={connectionStateLabel(state, t)} />
               </View>
-              {state === 'unauthorized' ? (
+              {state === 'unauthorized' || state === 'untrusted' ? (
                 <Typo variant="body-sm" color="coral">
-                  {t('mobile.unauthorized.body')}
+                  {t(state === 'untrusted' ? 'mobile.untrusted.body' : 'mobile.unauthorized.body')}
                 </Typo>
               ) : runtimeOffline ? (
                 <Typo variant="body-sm" color="ink-muted">
@@ -90,7 +91,26 @@ export default function MoreScreen() {
                 <Row label={t('settings.remote.device')} value={paired.deviceName} mono={false} />
                 <Divider />
                 <Row label={t('settings.remote.pairedAt')} value={formatDate(paired.pairedAt, settings.locale)} mono={false} />
+                <Divider />
+                {/* Stacked, never truncated: the whole fingerprint is what gets compared with the computer. */}
+                <View style={{ gap: theme.spacing['space-1'], paddingVertical: theme.spacing['space-2'] }}>
+                  <Typo variant="body-sm" color="ink-muted">
+                    {t('settings.remote.fingerprint')}
+                  </Typo>
+                  <Typo variant="code-sm" selectable>
+                    {paired.runtimeKey ? runtimeFingerprint(paired.runtimeKey) : '—'}
+                  </Typo>
+                </View>
               </View>
+              <Typo variant="body-sm" color="ink-faint">
+                {t(
+                  paired.runtimeKeySource === 'qr'
+                    ? 'settings.remote.fingerprint.qr'
+                    : paired.runtimeKey
+                      ? 'settings.remote.fingerprint.firstUse'
+                      : 'settings.remote.fingerprint.pending',
+                )}
+              </Typo>
               {confirmForget ? (
                 <Typo variant="body-sm" color="ink-muted">
                   {t('settings.remote.forgetHint')}
@@ -98,7 +118,7 @@ export default function MoreScreen() {
               ) : null}
               <View style={{ gap: theme.spacing['space-2'] }}>
                 <Button
-                  variant={state === 'unauthorized' ? 'primary' : 'secondary'}
+                  variant={state === 'unauthorized' || state === 'untrusted' ? 'primary' : 'secondary'}
                   label={t('settings.remote.repair')}
                   onPress={() => router.push('/pair')}
                 />

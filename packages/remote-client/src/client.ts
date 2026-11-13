@@ -13,6 +13,7 @@ import {
 /* Subpaths, not the barrel: the barrel pulls `node:crypto` (ids), which React Native cannot bundle. */
 import { Deferred } from '@codeo/shared-utils/deferred';
 import { TypedEmitter } from '@codeo/shared-utils/emitter';
+import { RuntimeIdentityError, type VerifyRequest } from './identity';
 
 /** Minimal WebSocket surface shared by browsers, React Native and the `ws` package. */
 export interface WebSocketLike {
@@ -29,8 +30,9 @@ export type WebSocketFactory = (url: string, init: { headers: Record<string, str
 /**
  * `unauthorized` is terminal: the credentials were refused for good (revoked phone, refresh token gone).
  * Nothing reconnects until a new client is built with new credentials.
+ * `untrusted` is terminal too: the runtime behind the gateway failed the identity check (`verify`).
  */
-export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'closed';
+export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'untrusted' | 'closed';
 
 /** Context handed to a token provider before each connection attempt. */
 export interface TokenRequest {
@@ -58,6 +60,12 @@ export interface RuntimeClientOptions {
   reconnect?: boolean;
   /** Replay the whole event log on first connect (default: only replay after a reconnect). */
   replayFromStart?: boolean;
+  /**
+   * Runs after every `welcome`, before the client reports `connected` or lets the app send anything
+   * (`runtimeIdentityCheck`). A `RuntimeIdentityError` ends in the terminal `untrusted` state; any other
+   * error drops the connection and reconnects as usual.
+   */
+  verify?: (request: VerifyRequest) => Promise<void>;
 }
 
 interface ClientEvents extends Record<string, unknown> {
@@ -99,6 +107,9 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
   private failures = 0;
   private rejected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The socket whose `welcome` is being verified: only `verify` may send on it. */
+  private verifying: WebSocketLike | null = null;
+  private held: Array<{ seq: number; event: RuntimeEvent }> = [];
   runtime: RuntimeInfo | null = null;
   scopes: string[] = [];
 
@@ -170,6 +181,7 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
     };
     ws.onclose = (ev) => {
       if (this.ws === ws) this.ws = null;
+      if (this.verifying === ws) this.verifying = null;
       const info = closeInfo(ev);
       for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
@@ -183,7 +195,7 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
       if (info.code === CLOSE_UNAUTHORIZED) this.rejected = true;
       this.emit('disconnected', info);
       if (this.closedByUser || this.opts.reconnect === false) {
-        if (this._state !== 'unauthorized') this.setState('closed');
+        if (this._state !== 'unauthorized' && this._state !== 'untrusted') this.setState('closed');
         return;
       }
       this.scheduleReconnect();
@@ -215,13 +227,11 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
     }
     switch (msg.kind) {
       case 'welcome':
-        this.runtime = msg.runtime;
-        this.scopes = msg.scopes;
-        this.reconnectDelay = 500;
-        this.failures = 0;
-        this.setState('connected');
-        this.emit('welcome', { runtime: msg.runtime, lastSeq: msg.lastSeq, scopes: msg.scopes });
-        this.hello.resolve();
+        if (this.opts.verify) {
+          if (this.ws && this.verifying !== this.ws) void this.verifyRuntime(this.ws, msg);
+          return;
+        }
+        this.accept(msg);
         return;
       case 'response': {
         const p = this.pending.get(msg.id);
@@ -233,8 +243,12 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
         return;
       }
       case 'event':
-        if (msg.seq > this._lastSeq) this._lastSeq = msg.seq;
-        this.emit('event', { seq: msg.seq, event: msg.event });
+        /* Events replayed while the runtime is being verified wait: an untrusted runtime's events are dropped. */
+        if (this.verifying) {
+          this.held.push({ seq: msg.seq, event: msg.event });
+          return;
+        }
+        this.deliver(msg.seq, msg.event);
         return;
       case 'error':
         this.emit('error', new Error(msg.message));
@@ -244,8 +258,55 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
     }
   }
 
+  private deliver(seq: number, event: RuntimeEvent): void {
+    if (seq > this._lastSeq) this._lastSeq = seq;
+    this.emit('event', { seq, event });
+  }
+
+  private accept(msg: Extract<ServerMessage, { kind: 'welcome' }>): void {
+    this.runtime = msg.runtime;
+    this.scopes = msg.scopes;
+    this.reconnectDelay = 500;
+    this.failures = 0;
+    this.setState('connected');
+    this.emit('welcome', { runtime: msg.runtime, lastSeq: msg.lastSeq, scopes: msg.scopes });
+    this.hello.resolve();
+  }
+
+  private async verifyRuntime(ws: WebSocketLike, msg: Extract<ServerMessage, { kind: 'welcome' }>): Promise<void> {
+    const verify = this.opts.verify;
+    if (!verify) return;
+    this.verifying = ws;
+    this.held = [];
+    try {
+      await verify((command, params) => this.send(ws, command, params));
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.held = [];
+      if (this.verifying === ws) this.verifying = null;
+      if (this.ws !== ws) return;
+      this.emit('error', error);
+      if (err instanceof RuntimeIdentityError) {
+        /* Not the paired runtime: never talk to it again from this client. */
+        this.closedByUser = true;
+        this.setState('untrusted');
+        if (!this.hello.settled) this.hello.reject(error);
+      }
+      ws.close();
+      return;
+    }
+    if (this.verifying === ws) this.verifying = null;
+    if (this.ws !== ws) return;
+    this.accept(msg);
+    for (const h of this.held.splice(0)) this.deliver(h.seq, h.event);
+  }
+
   async request<C extends CommandName>(command: C, params: CommandParams<C>): Promise<CommandResult<C>> {
     if (!this.ws || this._state !== 'connected') throw new RuntimeError('INTERNAL', 'runtime not connected');
+    return this.send(this.ws, command, params);
+  }
+
+  private send<C extends CommandName>(ws: WebSocketLike, command: C, params: CommandParams<C>): Promise<CommandResult<C>> {
     const id = `${Date.now().toString(36)}-${++this.counter}`;
     const d = new Deferred<unknown>();
     const timer = setTimeout(() => {
@@ -254,7 +315,7 @@ export class RuntimeClient extends TypedEmitter<ClientEvents> {
     }, this.opts.requestTimeoutMs ?? 60_000);
     this.pending.set(id, { d, timer });
     const msg: ClientMessage = { kind: 'request', id, command, params };
-    this.ws.send(JSON.stringify(msg));
+    ws.send(JSON.stringify(msg));
     return d.promise as Promise<CommandResult<C>>;
   }
 

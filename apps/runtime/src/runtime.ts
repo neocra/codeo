@@ -210,6 +210,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'remote.pairingStart': async () => remote.startPairing(),
     'remote.devices': async () => remote.devices(),
     'remote.revokeDevice': async (p) => remote.revokeDevice(p.deviceId),
+    'remote.identity': async (p) => remote.proveIdentity(p.challenge),
     'home.summary': async (p) => {
       const all = await workspaces.list();
       const workspace = (p.workspaceId ? all.find((w) => w.id === p.workspaceId) : all[0]) ?? null;

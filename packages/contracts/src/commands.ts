@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { IdentityChallengeSchema, RuntimeIdentityProofSchema } from './identity';
 import { PROTOCOL_VERSION } from './version';
 import {
   AgentProviderIdSchema,
@@ -167,6 +168,8 @@ export const RemoteStatusSchema = z.object({
   connection: RemoteConnectionSchema,
   connectedAt: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** Fingerprint of this runtime's identity key (`formatFingerprint`), the one phones verify; null before the first use. */
+  fingerprint: z.string().nullable(),
 });
 export type RemoteStatus = z.infer<typeof RemoteStatusSchema>;
 
@@ -174,8 +177,10 @@ export const RemotePairingSchema = z.object({
   /** 6 digits, single use, for manual entry on the phone. */
   code: z.string(),
   expiresAt: z.string(),
-  /** JSON payload `{ v, gateway, code, runtimeId, nonce }` the desktop renders as a QR code. */
+  /** JSON payload `{ v, gateway, code, runtimeId, nonce, key }` the desktop renders as a QR code (`key`: the runtime's public key). */
   qrPayload: z.string(),
+  /** Fingerprint of the runtime key in the QR code, shown next to it so a code typed by hand can be checked on the phone. */
+  fingerprint: z.string(),
 });
 export type RemotePairing = z.infer<typeof RemotePairingSchema>;
 
@@ -394,6 +399,8 @@ export const commands = {
   'remote.disable': define(z.object({}), RemoteStatusSchema, 'workspace:admin'),
   'remote.pairingStart': define(z.object({}), RemotePairingSchema, 'workspace:admin'),
   'remote.devices': define(z.object({}), z.array(PairedDeviceSchema), 'workspace:admin'),
+  /* Proof of identity a paired phone asks for on every connection (`identity.ts`): read-only, signs a challenge. */
+  'remote.identity': define(z.object({ challenge: IdentityChallengeSchema }), RuntimeIdentityProofSchema, 'read'),
   'remote.revokeDevice': define(z.object({ deviceId: z.string().min(3).max(80) }), z.object({ deviceId: z.string(), revoked: z.boolean() }), 'workspace:admin'),
 
   'home.summary': define(z.object({ workspaceId: IdSchema.optional() }), HomeSummarySchema, 'read'),

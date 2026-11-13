@@ -26,11 +26,11 @@ export function NotConnected() {
     );
   }
 
-  if (state === 'unauthorized') {
+  if (state === 'unauthorized' || state === 'untrusted') {
     return (
       <EmptyState
         title={connectionStateLabel(state, t)}
-        body={t('mobile.unauthorized.body')}
+        body={t(state === 'untrusted' ? 'mobile.untrusted.body' : 'mobile.unauthorized.body')}
         action={<Button variant="primary" icon="shield" label={t('settings.remote.repair')} onPress={() => router.push('/pair')} />}
       />
     );

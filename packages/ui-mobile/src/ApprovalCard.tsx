@@ -21,6 +21,11 @@ export interface ApprovalCardProps {
   approvedLabel: string;
   rejectedLabel: string;
   errorLabel: string;
+  /**
+   * Text shown when a decision fails. Defaults to `errorLabel` followed by the error's message; return the
+   * whole text yourself for outcomes that are not errors (the person cancelled a confirmation).
+   */
+  formatError?: (err: unknown) => string;
   /** Resolves when the runtime accepted the decision; rejects to show the error state. */
   onApprove: () => Promise<void>;
   onReject: () => Promise<void>;
@@ -44,6 +49,7 @@ export function ApprovalCard({
   approvedLabel,
   rejectedLabel,
   errorLabel,
+  formatError,
   onApprove,
   onReject,
   resolved = null,
@@ -95,7 +101,7 @@ export function ApprovalCard({
       setState(decision === 'approve' ? 'approved' : 'rejected');
     } catch (err) {
       setState('error');
-      setErrorMessage(err instanceof Error ? err.message : String(err));
+      setErrorMessage(formatError ? formatError(err) : `${errorLabel} ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -171,7 +177,7 @@ export function ApprovalCard({
           </View>
           {effective === 'error' ? (
             <Typo variant="body-sm" color="coral">
-              {errorMessage ? `${errorLabel} ${errorMessage}` : errorLabel}
+              {errorMessage ?? errorLabel}
             </Typo>
           ) : null}
         </View>

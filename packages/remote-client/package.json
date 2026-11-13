@@ -16,6 +16,8 @@
   "dependencies": {
     "@codeo/contracts": "workspace:*",
     "@codeo/shared-utils": "workspace:*",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {

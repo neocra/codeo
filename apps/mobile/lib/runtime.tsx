@@ -2,7 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useQuery, useQueryClient, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { CommandName, CommandParams, CommandResult, RuntimeEvent, RuntimeInfo } from '@codeo/contracts';
 import type { SessionEntry } from '@codeo/domain';
-import { CLOSE_RUNTIME_OFFLINE, GatewaySession, RuntimeClient, type ConnectionState } from '@codeo/remote-client';
+import * as Crypto from 'expo-crypto';
+import { CLOSE_RUNTIME_OFFLINE, GatewaySession, RuntimeClient, runtimeIdentityCheck, type ConnectionState } from '@codeo/remote-client';
 import { selectConfigured, useSettings } from './settings';
 
 export const APP_CLIENT = { name: 'codeo-remote', version: '0.1.0', kind: 'mobile' } as const;
@@ -104,6 +105,10 @@ function gatewaySession(): GatewaySession {
  * A client that reaches the runtime through the gateway the phone was paired with. The access token is
  * renewed before it expires, right away when the gateway closes the socket with 4003, and after repeated
  * failed handshakes; a refused refresh (revoked phone) ends in the terminal `unauthorized` state.
+ *
+ * Before anything is sent, every connection asks the runtime to sign a fresh challenge with its identity
+ * key and compares the key with the one from the pairing QR code (or the one accepted on first use). A
+ * runtime that cannot prove it ends in the terminal `untrusted` state: the gateway cannot swap it.
  */
 function gatewayClient(): RuntimeClient {
   const session = gatewaySession();
@@ -112,6 +117,12 @@ function gatewayClient(): RuntimeClient {
     token: (req) => session.accessToken({ force: req.rejected || req.failures >= 2 }),
     bearerHeader: true,
     client: APP_CLIENT,
+    verify: runtimeIdentityCheck({
+      runtimeId: session.credentials.runtimeId,
+      pinnedKey: () => session.credentials.runtimeKey ?? null,
+      onFirstUse: (key) => session.pinRuntimeKey(key),
+      randomBytes: (length) => Crypto.getRandomBytes(length),
+    }),
   });
 }
 
