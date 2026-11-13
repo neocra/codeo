@@ -281,7 +281,7 @@ export class SessionService {
   }
 
   private async launchBootstrap(session: AgentSession, prompt: string): Promise<AgentSession> {
-    if (!existsSync(session.cwd)) {
+    if (!this.cwdAvailable(session.cwd)) {
       const message = `Le dossier de travail de cette session n’existe plus (${session.cwd}) : le worktree a été supprimé.`;
       /* Leave a terminal state behind, as the provider-unavailable path does, so recovery never resumes it;
          pick one the state machine allows from here (idle → completed, created/disconnected → failed). */
@@ -888,6 +888,9 @@ export class SessionService {
       if (s) await this.setStatus(s, 'disconnected', 'Runtime arrêté.');
     }
   }
+
+  /** Whether a session's working directory can host an agent; the demo runtime accepts only its fictional `demo://` folders. */
+  cwdAvailable: (cwd: string) => boolean = (cwd) => existsSync(cwd);
 
   /** Set by the runtime: verifies a session's worktree is still the one git knows before resuming into it. */
   worktreeValidator: ((worktreeId: string) => Promise<unknown>) | null = null;

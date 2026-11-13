@@ -155,6 +155,13 @@ _Updated: 2026-11-13_
   Workspaces, Tasks (create + start), Sessions (live chat, tool calls, approvals, stop), Settings
   (provider detection), plus clearly labelled placeholders for Tickets, Review, Plugins.
 - Mobile foundation (Expo) and Gateway skeleton (see their READMEs).
+- Demo mode (`CODEO_DEMO=1`, Settings → Mode démo): fictional Elyndor (Unity, multi-repo) and Codeo Cloud
+  (SaaS monorepo) workspaces with tasks, transcripts and past approvals (`apps/runtime/src/demo`). Scripted
+  agents (`DemoProvider`, reported as `version: demo`, no executable) stream a turn and go through a real
+  Codeo approval; nothing is spawned or written. Separation: the desktop runs the demo runtime on
+  `~/.codeo/demo` (own database and discovery file); each database records its mode and a runtime refuses
+  to open data of the other mode; demo runtimes refuse real repository paths, opening pull requests and turning remote access on (Settings shows a notice instead of the remote card). The UI shows a "Démo" badge
+  and a banner whenever `runtime.info.demoMode` is true.
 
 ### Known limitations
 - Remote access: mobile pairing was run in the iOS simulator with a code typed by hand; the camera scan of the desktop's
@@ -167,14 +174,14 @@ _Updated: 2026-11-13_
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
 - Review comments are not persisted as drafts (they live in the screen until sent) and are not posted to GitHub PRs; after completion, iterate with a new task.
-- Demo mode with the Elyndor / Codeo Cloud datasets: not yet implemented.
+- Demo mode: tickets, review diffs and PRs have no demo data yet. Demo repositories are not Git checkouts, so demo tasks run without worktree isolation (parallel / best-of-N are refused there). The demo dataset is written once; delete `~/.codeo/demo` to reset it.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox (`workspace-write`).
 - Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
 1. Scan the desktop's QR code from a physical phone (QR pairing pins the runtime key; Face ID match on a real device).
-2. Demo mode dataset, clearly separated from live data (open PR neocra/codeo#10 needs a rebase).
+2. Demo data for review diffs and pull requests (the demo dataset has tasks, sessions and approvals only).
 
 ## Verification log — 2026-11-13 (phase 6, runtime identity + Face ID)
 
@@ -281,3 +288,14 @@ Not verified in this session: the new desktop dialog/detail clicked through in t
 | Screenshots | `docs/design/screenshots/*.png` captured from the built app with `CODEO_SCREENSHOT_DIR` (compare with `docs/design/references/home-desktop.webp`) |
 
 Not verified in this session: mobile app on a device/simulator (code typechecks; Metro/Expo run not executed), gateway against a real runtime relay client (phase 6), packaged installers.
+
+## Verification log — 2026-10-21 (demo mode)
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` / `pnpm lint` | 17/17 clean |
+| `pnpm test` | all suites pass; `demo.test.ts` 7 tests (dataset validity, scripted task through a manual-mode approval, resume of a seeded session, new task in auto mode without worktree or approval, demo/live data-mode separation) |
+| `CODEO_DEMO=1` standalone runtime bundle | boots, detects `claude-code:demo`, `codex:demo`, `runtime.json` flags `demoMode: true` |
+| `electron-vite build` | ok |
+
+Not verified: the Settings toggle and banner in the running Electron app (no interactive session).

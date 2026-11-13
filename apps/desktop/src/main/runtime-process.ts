@@ -29,7 +29,11 @@ export class RuntimeProcess {
   private child: ChildProcess | null = null;
   private stopping = false;
 
-  constructor(private readonly dataDir: string) {}
+  constructor(
+    private readonly dataDir: string,
+    /** Demo mode: the runtime serves the fictional dataset with scripted agents. */
+    private readonly demo = false,
+  ) {}
 
   async start(): Promise<RuntimeEndpoint> {
     const url = process.env['CODEO_RUNTIME_URL'];
@@ -59,6 +63,7 @@ export class RuntimeProcess {
         CODEO_DATA_DIR: this.dataDir,
         CODEO_RUNTIME_TOKEN: runtimeToken,
         CODEO_RUNTIME_PARENT: 'desktop',
+        CODEO_DEMO: this.demo ? '1' : '0',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,

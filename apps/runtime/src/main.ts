@@ -10,6 +10,7 @@ import { RUNTIME_VERSION } from './version';
 /**
  * Standalone runtime entry. Started by Codeo Desktop (as a child process) or by hand:
  *   CODEO_DATA_DIR=~/.codeo codeo-runtime
+ *   CODEO_DEMO=1 CODEO_DATA_DIR=~/.codeo/demo codeo-runtime   (fictional dataset, scripted agents)
  * Prints one JSON line `CODEO_RUNTIME_READY {...}` on stdout once it accepts connections.
  */
 async function main() {
@@ -20,14 +21,15 @@ async function main() {
   const port = Number(process.env['CODEO_RUNTIME_PORT'] ?? 0);
   const host = process.env['CODEO_RUNTIME_HOST'] ?? '127.0.0.1';
 
-  const runtime = await createRuntime({ dataDir, logger });
+  const demo = process.env['CODEO_DEMO'] === '1';
+  const runtime = await createRuntime({ dataDir, logger, demo });
   const server = await startServer({ runtime, token, host, port, logger: logger.child('ws') });
   runtime.bus.publish('RuntimeReady', { version: RUNTIME_VERSION });
 
   /* Discovery file for local clients (CLI, a desktop started after the runtime). Mode 0600. */
-  const discovery = { url: `ws://${server.host}:${server.port}`, token, pid: process.pid, version: RUNTIME_VERSION, startedAt: runtime.info.startedAt };
+  const discovery = { url: `ws://${server.host}:${server.port}`, token, pid: process.pid, version: RUNTIME_VERSION, startedAt: runtime.info.startedAt, demoMode: demo };
   writeFileSync(path.join(dataDir, 'runtime.json'), JSON.stringify(discovery, null, 2), { mode: 0o600 });
-  process.stdout.write(`CODEO_RUNTIME_READY ${JSON.stringify({ url: discovery.url, version: RUNTIME_VERSION })}\n`);
+  process.stdout.write(`CODEO_RUNTIME_READY ${JSON.stringify({ url: discovery.url, version: RUNTIME_VERSION, demoMode: demo })}\n`);
 
   let stopping = false;
   const stop = async (signal: string) => {

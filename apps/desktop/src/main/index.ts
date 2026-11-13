@@ -15,12 +15,16 @@ const log = createLogger({ scope: 'desktop' });
 const dataDir = process.env['CODEO_DATA_DIR'] ?? path.join(os.homedir(), '.codeo');
 mkdirSync(dataDir, { recursive: true });
 const prefsFile = path.join(dataDir, 'desktop-preferences.json');
+/* Demo data lives in its own directory (own database, own discovery file): it never mixes with live data. */
+const runtimeDir = (demo: boolean) => (demo ? path.join(dataDir, 'demo') : dataDir);
 
 let mainWindow: BrowserWindow | null = null;
 let client: RuntimeClient | null = null;
-const runtimeProcess = new RuntimeProcess(dataDir);
+let demoMode = readPrefs()['demoMode'] === true;
+let runtimeProcess = new RuntimeProcess(runtimeDir(demoMode), demoMode);
 const updates = new UpdateService();
 let status: RuntimeStatus = { state: 'starting', info: null, error: null };
+let switching: Promise<void> = Promise.resolve();
 
 function setStatus(next: Partial<RuntimeStatus>) {
   status = { ...status, ...next };
@@ -37,6 +41,7 @@ function readPrefs(): Record<string, unknown> {
 
 async function connectRuntime(): Promise<void> {
   try {
+    mkdirSync(runtimeDir(demoMode), { recursive: true });
     const endpoint = await runtimeProcess.start();
     setStatus({ state: 'connecting', error: null });
     client = new RuntimeClient({
@@ -57,6 +62,22 @@ async function connectRuntime(): Promise<void> {
     log.error('runtime connection failed', { err: String(err) });
     setStatus({ state: 'failed', error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+/** Stops the current runtime and starts one on the other data directory. */
+function switchDemoMode(enabled: boolean): Promise<void> {
+  switching = switching.then(async () => {
+    if (enabled === demoMode && status.state === 'connected') return;
+    demoMode = enabled;
+    client?.removeAll();
+    client?.close();
+    client = null;
+    await runtimeProcess.stop();
+    runtimeProcess = new RuntimeProcess(runtimeDir(demoMode), demoMode);
+    setStatus({ state: 'starting', info: null, error: null });
+    await connectRuntime();
+  });
+  return switching;
 }
 
 function createWindow() {
@@ -136,6 +157,11 @@ function registerIpc() {
   ipcMain.handle(IPC.updateInstall, () => updates.install());
   ipcMain.handle(IPC.getUpdateStatus, () => updates.current);
   ipcMain.handle(IPC.openReleasePage, () => updates.openReleasePage());
+  ipcMain.handle(IPC.setDemoMode, async (_e, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') throw new Error('Valeur invalide');
+    writeFileSync(prefsFile, JSON.stringify({ ...readPrefs(), demoMode: enabled }, null, 2));
+    await switchDemoMode(enabled);
+  });
   ipcMain.handle(IPC.userName, () => {
     const info = os.userInfo();
     const full = (process.env['CODEO_USER_NAME'] ?? info.username).split(/[._-]/)[0] ?? info.username;

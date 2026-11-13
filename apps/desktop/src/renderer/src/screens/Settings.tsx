@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ProviderStatus } from '@codeo/domain';
-import { Banner, Button, Card, Choice, PageHeader, Placeholder, ProgressBar, StatusPill } from '@codeo/ui-desktop';
+import { Banner, Button, Card, Choice, PageHeader, ProgressBar, StatusPill } from '@codeo/ui-desktop';
 import type { RuntimeStatus, UpdateStatus } from '../../../shared/bridge-types';
 import { RemoteAccess } from '../components/RemoteAccess';
 import { codeo, invoke } from '../lib/api';
@@ -138,6 +138,22 @@ export function SettingsScreen() {
   const { theme, setTheme, calm, setCalm, locale, setLocale } = useUi();
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [switchingDemo, setSwitchingDemo] = useState(false);
+  const [demoPref, setDemoPref] = useState(false);
+  useEffect(() => void codeo.getPreference<boolean>('demoMode', false).then(setDemoPref), []);
+  /* The runtime is the source of truth; the preference covers a runtime that failed to start. */
+  const demo = runtime?.info ? runtime.info.demoMode : demoPref;
+  const toggleDemo = async () => {
+    setSwitchingDemo(true);
+    try {
+      setDemoPref(!demo);
+      await codeo.setDemoMode(!demo);
+      /* Another runtime, another database: nothing cached from the previous one is valid. */
+      await qc.resetQueries();
+    } finally {
+      setSwitchingDemo(false);
+    }
+  };
   useEffect(() => {
     void codeo.getRuntimeStatus().then(setRuntime);
     return codeo.onRuntimeStatus(setRuntime);
@@ -200,9 +216,13 @@ export function SettingsScreen() {
             </dl>
             <div className="cd-divider" />
             <div className="cd-card__title" style={{ marginBottom: 8 }}>{t('settings.demo')}</div>
-            <div className="cd-row-gap">
-              <span className="cd-body-sm cd-muted">{t('settings.demo.hint')}</span>
-              <Placeholder>{t('placeholder.phase', { n: 3 })}</Placeholder>
+            <div className="cd-stack" style={{ gap: 8 }}>
+              <span className="cd-body-sm cd-muted">{demo ? t('settings.demo.active') : t('settings.demo.hint')}</span>
+              <div>
+                <Button variant={demo ? 'secondary' : 'ghost'} size="sm" disabled={switchingDemo} onClick={() => void toggleDemo()}>
+                  {switchingDemo ? t('settings.demo.switching') : demo ? t('settings.demo.disable') : t('settings.demo.enable')}
+                </Button>
+              </div>
             </div>
             <div style={{ marginTop: 12 }}>
               <Button variant="ghost" size="sm" icon="external" onClick={() => void codeo.openExternal('https://code.claude.com/docs/en/agent-sdk/typescript')}>
@@ -212,7 +232,8 @@ export function SettingsScreen() {
           </Card>
         </div>
         <Card title={t('settings.remote')} icon="shield">
-          <RemoteAccess />
+          {/* A demo runtime refuses to register on a gateway: its data is fictional. */}
+          {runtime?.info?.demoMode ? <Banner tone="info">{t('settings.remote.demo')}</Banner> : <RemoteAccess />}
         </Card>
         <UpdatesCard />
       </div>
