@@ -160,7 +160,7 @@ _Updated: 2026-11-13_
   agents (`DemoProvider`, reported as `version: demo`, no executable) stream a turn and go through a real
   Codeo approval; nothing is spawned or written. Separation: the desktop runs the demo runtime on
   `~/.codeo/demo` (own database and discovery file); each database records its mode and a runtime refuses
-  to open data of the other mode; demo runtimes refuse real repository paths. The UI shows a "Démo" badge
+  to open data of the other mode; demo runtimes refuse real repository paths, opening pull requests and turning remote access on (Settings shows a notice instead of the remote card). The UI shows a "Démo" badge
   and a banner whenever `runtime.info.demoMode` is true.
 
 ### Known limitations

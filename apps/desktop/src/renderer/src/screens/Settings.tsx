@@ -232,7 +232,8 @@ export function SettingsScreen() {
           </Card>
         </div>
         <Card title={t('settings.remote')} icon="shield">
-          <RemoteAccess />
+          {/* A demo runtime refuses to register on a gateway: its data is fictional. */}
+          {runtime?.info?.demoMode ? <Banner tone="info">{t('settings.remote.demo')}</Banner> : <RemoteAccess />}
         </Card>
         <UpdatesCard />
       </div>

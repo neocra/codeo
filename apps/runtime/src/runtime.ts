@@ -195,6 +195,12 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     if (demo) throw localizedError('FORBIDDEN', 'demo.realRepository', undefined, 'Mode démo : les dépôts réels se gèrent en mode réel.');
     return p;
   };
+  /* Demo data must not reach real services either: no push to a real remote, no registration on a real gateway. */
+  const liveOnly = (key: 'demo.pullRequests' | 'demo.remoteAccess', text: string) => {
+    if (demo) throw localizedError('FORBIDDEN', key, undefined, text);
+  };
+  const noDemoPullRequests = () => liveOnly('demo.pullRequests', 'Mode démo : les pull requests s’ouvrent en mode réel.');
+  const noDemoRemote = () => liveOnly('demo.remoteAccess', 'Mode démo : l’accès distant se configure en mode réel.');
 
   const handlers: Handlers = {
     'runtime.info': async () => info,
@@ -229,7 +235,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'worktrees.remove': async (p) => ({ removed: await removeWorktreeGuarded(p.worktreeId, p.force) }),
     'github.status': async () => pullRequests.status(),
     'pullRequests.list': async (p) => pullRequests.list(p),
-    'pullRequests.create': async (p) => pullRequests.create(p),
+    'pullRequests.create': async (p) => (noDemoPullRequests(), pullRequests.create(p)),
     'pullRequests.refresh': async (p) => pullRequests.refresh(p.pullRequestId),
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),
@@ -240,9 +246,9 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     /* A decision relayed by the gateway comes from a paired phone. */
     'approvals.resolve': async (p, ctx) => approvals.resolve(p.approvalId, p.decision, ctx.clientKind === 'mobile' || ctx.clientKind === 'gateway' ? 'mobile' : 'desktop', p.reason),
     'remote.status': async () => remote.status(),
-    'remote.enable': async (p) => remote.enable(p.gatewayUrl),
+    'remote.enable': async (p) => (noDemoRemote(), remote.enable(p.gatewayUrl)),
     'remote.disable': async () => remote.disable(),
-    'remote.pairingStart': async () => remote.startPairing(),
+    'remote.pairingStart': async () => (noDemoRemote(), remote.startPairing()),
     'remote.devices': async () => remote.devices(),
     'remote.revokeDevice': async (p) => remote.revokeDevice(p.deviceId),
     'remote.identity': async (p) => remote.proveIdentity(p.challenge),

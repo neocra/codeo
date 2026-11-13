@@ -63,6 +63,13 @@ describe('demo runtime', () => {
     await expect(call(rt, 'repositories.inspect', { path: os.tmpdir() })).rejects.toThrow(/démo/);
   });
 
+  it('keeps demo data away from real services: no pull request, no gateway', async () => {
+    await expect(call(rt, 'pullRequests.create', { taskId: 'task_demo_cc88' })).rejects.toThrow(/démo/);
+    await expect(call(rt, 'remote.enable', { gatewayUrl: 'http://localhost:1' })).rejects.toThrow(/démo/);
+    await expect(call(rt, 'remote.pairingStart', {})).rejects.toThrow(/démo/);
+    expect((await call(rt, 'remote.status', {})).enabled).toBe(false);
+  });
+
   it('runs a scripted task through a real approval', async () => {
     const { sessions: [session] } = await call(rt, 'tasks.start', { taskId: DEMO_LIVE_TASK_ID });
     await waitFor(async () => (await call(rt, 'approvals.list', { status: 'pending' })).length === 1);
