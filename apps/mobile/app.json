@@ -27,6 +27,12 @@
       "expo-font",
       "expo-secure-store",
       [
+        "expo-notifications",
+        {
+          "defaultChannel": "approvals"
+        }
+      ],
+      [
         "expo-local-authentication",
         {
           "faceIDPermission": "Codeo Remote asks for Face ID before sending an approval decision to your computer."

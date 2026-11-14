@@ -11,9 +11,10 @@ import type { GatewayConfig } from './config';
 import { errorBody, GatewayError, type GatewayErrorCode } from './errors';
 import { runMaintenance } from './maintenance';
 import { createPairingService } from './pairing';
+import { createPushDispatcher, createPushSenders, type PushDispatcher, type PushSender } from './push';
 import { createRelay, RELAY_MAX_FRAME_BYTES, type Relay } from './relay';
 import { createRoutes } from './routes';
-import type { GatewayStore } from './store';
+import type { GatewayStore, PushProvider } from './store';
 import { TokenService } from './tokens';
 
 export const GATEWAY_VERSION = '0.1.0';
@@ -24,6 +25,8 @@ export interface BuildAppOptions {
   clock?: Clock | undefined;
   /** How often expired codes, tokens and old audit entries are deleted (default 1 h; 0 disables). */
   maintenanceIntervalMs?: number | undefined;
+  /** Push senders; defaults to the ones `config.push` has credentials for (tests inject fakes). */
+  pushSenders?: Partial<Record<PushProvider, PushSender>> | undefined;
 }
 
 export interface GatewayApp {
@@ -31,6 +34,7 @@ export interface GatewayApp {
   relay: Relay;
   auth: AuthService;
   tokens: TokenService;
+  push: PushDispatcher;
 }
 
 function codeForStatus(status: number): GatewayErrorCode {
@@ -99,12 +103,23 @@ export async function buildApp(config: GatewayConfig, store: GatewayStore, opts:
     publicUrl: config.publicUrl,
     codeTtlSeconds: config.pairingCodeTtlSeconds,
   });
-  const relay = createRelay({ store, auth, audit, clock, log, version: GATEWAY_VERSION });
-  auth.events.on('deviceRevoked', ({ deviceId, reason }) => relay.disconnectDevice(deviceId, reason));
+  const push = createPushDispatcher({
+    store,
+    senders: opts.pushSenders ?? createPushSenders(config.push, clock),
+    clock,
+    audit,
+    log: log.child('push'),
+  });
+  const relay = createRelay({ store, auth, audit, clock, log, version: GATEWAY_VERSION, onRuntimeEvent: push.onRuntimeEvent });
+  auth.events.on('deviceRevoked', ({ deviceId, reason }) => {
+    relay.disconnectDevice(deviceId, reason);
+    /* A revoked phone must not keep receiving even content-free notifications. */
+    store.pushTokens.delete(deviceId).catch((err: unknown) => log.warn('push token removal failed', { deviceId, err: err instanceof Error ? err.message : String(err) }));
+  });
 
   await app.register(websocket, { options: { maxPayload: RELAY_MAX_FRAME_BYTES } });
   await app.register(relay.plugin);
-  await app.register(createRoutes({ store, auth, pairing, relay, audit, clock, log: log.child('http'), version: GATEWAY_VERSION, startedAt }));
+  await app.register(createRoutes({ store, auth, pairing, relay, push, audit, clock, log: log.child('http'), version: GATEWAY_VERSION, startedAt }));
   const maintenanceIntervalMs = opts.maintenanceIntervalMs ?? 60 * 60 * 1000;
   let maintenance: Promise<void> = Promise.resolve();
   const timer =
@@ -118,7 +133,8 @@ export async function buildApp(config: GatewayConfig, store: GatewayStore, opts:
     if (timer) clearInterval(timer);
     await maintenance;
     await relay.close();
+    await push.close();
   });
 
-  return { app, relay, auth, tokens };
+  return { app, relay, auth, tokens, push };
 }

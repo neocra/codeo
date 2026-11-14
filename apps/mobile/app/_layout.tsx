@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { theme } from '@codeo/ui-tokens';
 import { FONT_NAMES, ThemeProvider } from '@codeo/ui-mobile';
+import { PushRegistration } from '@/components/PushRegistration';
 import { RuntimeProvider } from '@/lib/runtime';
 import { useSettings } from '@/lib/settings';
 
@@ -43,6 +44,7 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider themeId="dark">
         <RuntimeProvider>
+          <PushRegistration />
           <StatusBar style="light" backgroundColor={dark.colors['bg-000']} />
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: dark.colors['bg-000'] } }}>
             <Stack.Screen name="(tabs)" />

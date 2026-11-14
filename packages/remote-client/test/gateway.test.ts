@@ -14,6 +14,9 @@ import {
   normalizeGatewayUrl,
   parsePairingQr,
   refreshCredentials,
+  registerPushToken,
+  unregisterPushToken,
+  ApprovalPushDataSchema,
   type ConnectionState,
   type GatewayCredentials,
   type WebSocketFactory,
@@ -108,7 +111,7 @@ beforeAll(async () => {
     {
       env: 'test', port, host: '127.0.0.1', publicUrl: gatewayUrl, secret: 'test-gateway-secret-0123456789abcdef0123456789',
       tls: null, trustProxy: false, pairingCodeTtlSeconds: 300, accessTokenTtlSeconds: 900, refreshTokenTtlSeconds: 3600, logLevel: 'error',
-      database: null, auditRetentionDays: 90,
+      database: null, auditRetentionDays: 90, push: { apns: null, fcm: null },
     },
     createMemoryStore(),
     { logger: quiet },
@@ -256,6 +259,22 @@ describe('access-token refresh', () => {
     /* The legitimate copy is cut off too (its refresh tokens were dropped with the device). */
     const after = (await refreshCredentials(rotated).catch((e: unknown) => e)) as GatewayClientError;
     expect(after.fatal).toBe(true);
+  });
+});
+
+describe('push registration', () => {
+  it('registers and removes this phone\'s token, and reports that the gateway cannot deliver without credentials', async () => {
+    const creds = await pair();
+    const session = new GatewaySession({ credentials: creds, onCredentials: () => undefined });
+    const delivery = await registerPushToken(session, { provider: 'apns', token: 'ab'.repeat(32), environment: 'sandbox', locale: 'fr' });
+    expect(delivery).toBe('unconfigured');
+    await expect(registerPushToken(session, { provider: 'fcm', token: `t:${'x'.repeat(40)}`, locale: 'fr' })).rejects.toMatchObject({ code: 'BAD_RESPONSE', status: 400 });
+    await unregisterPushToken(session);
+  });
+
+  it('accepts only the gateway\'s approval notifications', () => {
+    expect(ApprovalPushDataSchema.safeParse({ type: 'approval', runtimeId: 'rt_1abc', approvalId: 'apr_1' }).success).toBe(true);
+    expect(ApprovalPushDataSchema.safeParse({ type: 'url', href: 'https://evil.example' }).success).toBe(false);
   });
 });
 

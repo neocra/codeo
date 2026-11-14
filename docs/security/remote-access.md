@@ -117,8 +117,20 @@ runtime still only checks the `approval:decide` scope.
   rotated token presented again. Secrets are stored as sha256 hashes only (runtime secret, refresh tokens).
   Migrations run at boot under an advisory lock and a gateway refuses a schema newer than itself. Still per
   process: rate limiters and the relay (a runtime and its phones must reach the same instance).
-- **Push notifications (APNs/FCM).** No device-token storage, no dispatch of approval requests while the
-  app is backgrounded. Payloads must stay content-free (ids only) when added.
+- **Push notifications (APNs/FCM) — done (phase 6, step 5).** The phone registers its native token with
+  `PUT /v1/devices/me/push` (device access token; the provider must match the platform it paired as) and removes
+  it with `DELETE` (also done when the pairing is forgotten on the phone). Tokens live in `gateway_push_tokens`, one
+  per device; a token re-registered by a new pairing leaves the old device, and revoking a device deletes its
+  token. The gateway dispatches from the events it already relays: one push per *pending, unexpired*
+  `ApprovalRequested`, deduplicated by approval id (a relay reconnect replays events), to the runtime's
+  non-revoked devices that hold `approval:decide`, at most 30 per runtime per minute. Payloads are content-free:
+  a generic localized title and body plus `type`, `runtimeId` and `approvalId` — never the tool, command, summary,
+  paths or session. APNs uses token auth (ES256 `.p8`, HTTP/2, `apns-expiration` = the approval's expiry,
+  collapse id = approval id), FCM the HTTP v1 API with a service-account OAuth token. Tokens the provider declares
+  dead (410 / `BadDeviceToken` / `UNREGISTERED`) are deleted. Every send is audited (`push.send`). A provider
+  without credentials is reported to the phone as `delivery: unconfigured`, never faked. Not yet: a resolved
+  approval does not withdraw its notification (tapping it opens the inbox, which shows it decided), and real
+  delivery through Apple's and Google's servers has not been exercised (no credentials in development).
 - **TLS termination guidance and pinning.** Production deployments should terminate TLS at a reverse
   proxy with HSTS and forward `X-Forwarded-For` (`TRUST_PROXY=true`); in-process TLS is for single-host
   setups. Certificate pinning in the mobile app and in the runtime relay client is not implemented.
