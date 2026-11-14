@@ -129,7 +129,7 @@ export const en: Record<MessageKey, string> = {
   'workspaces.defaultExecutionMode': 'Default execution mode',
   'workspaces.defaultExecutionMode.hint': 'Applies to new sessions and tasks; each one can override it.',
   'executionMode.auto': 'Auto',
-  'executionMode.auto.desc': 'The agent acts autonomously. Claude Code: its auto mode approves routine actions itself and only escalates the ones it cannot clear. Codex: edits within the workspace sandbox.',
+  'executionMode.auto.desc': 'The agent acts autonomously. Claude Code: its auto mode approves routine actions itself and only escalates the ones it cannot clear. Codex: edits within the workspace sandbox; its auto-review agent decides on anything that needs to leave it (network, files outside the workspace).',
   'executionMode.full': 'Full autonomy',
   'executionMode.full.desc': 'Unattended execution: the agent waits for no approval. Enable only when you understand the risks.',
   'session.executionMode.manual': 'Execution mode: manual.',
