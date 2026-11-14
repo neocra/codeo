@@ -100,6 +100,31 @@ describe('push registration', () => {
     await ctx.app.inject({ method: 'POST', url: `/v1/devices/${phone.deviceId}/revoke`, headers: { authorization: `Bearer ${runtimeSecret}` } });
     await expect.poll(() => ctx!.store.pushTokens.get(phone.deviceId)).toBeNull();
   });
+
+  it('lets a phone revoke its own pairing: tokens, push token and listing all follow', async () => {
+    ctx = await createTestApp();
+    const { runtimeSecret } = await registerRuntime(ctx);
+    const phone = await pairDevice(ctx, runtimeSecret);
+    const other = await pairDevice(ctx, runtimeSecret, 'Pixel', 'android');
+    const auth = { authorization: `Bearer ${phone.accessToken}` };
+    await ctx.app.inject({ method: 'PUT', url: '/v1/devices/me/push', headers: auth, payload: apnsBody });
+
+    expect((await ctx.app.inject({ method: 'POST', url: '/v1/devices/me/revoke' })).statusCode).toBe(401);
+    /* A runtime secret cannot revoke "me": there is no device behind it. */
+    expect((await ctx.app.inject({ method: 'POST', url: '/v1/devices/me/revoke', headers: { authorization: `Bearer ${runtimeSecret}` } })).statusCode).toBe(401);
+
+    const res = await ctx.app.inject({ method: 'POST', url: '/v1/devices/me/revoke', headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ deviceId: phone.deviceId, revoked: true });
+    await expect.poll(() => ctx!.store.pushTokens.get(phone.deviceId)).toBeNull();
+    expect((await ctx.app.inject({ method: 'POST', url: '/v1/auth/refresh', payload: { refreshToken: phone.refreshToken } })).statusCode).toBeGreaterThanOrEqual(401);
+    /* The access token dies with the device, and only this phone was revoked. */
+    expect((await ctx.app.inject({ method: 'POST', url: '/v1/devices/me/revoke', headers: auth })).statusCode).toBe(403);
+    const listed = (await ctx.app.inject({ method: 'GET', url: '/v1/devices', headers: { authorization: `Bearer ${runtimeSecret}` } })).json() as { devices: { deviceId: string; revoked: boolean }[] };
+    expect(listed.devices.find((d) => d.deviceId === phone.deviceId)?.revoked).toBe(true);
+    expect(listed.devices.find((d) => d.deviceId === other.deviceId)?.revoked).toBe(false);
+    expect(await ctx.store.audit.list({ action: 'device.revoke', actor: `device:${phone.deviceId}` })).toHaveLength(1);
+  });
 });
 
 describe('push dispatch from runtime events', () => {

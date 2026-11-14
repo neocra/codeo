@@ -3,7 +3,8 @@ import { useQuery, useQueryClient, type QueryClient, type UseQueryResult } from 
 import type { CommandName, CommandParams, CommandResult, RuntimeEvent, RuntimeInfo } from '@codeo/contracts';
 import type { SessionEntry } from '@codeo/domain';
 import * as Crypto from 'expo-crypto';
-import { CLOSE_RUNTIME_OFFLINE, GatewaySession, RuntimeClient, runtimeIdentityCheck, type ConnectionState } from '@codeo/remote-client';
+import { CLOSE_RUNTIME_OFFLINE, GatewaySession, RuntimeClient, revokeThisDevice, runtimeIdentityCheck, type ConnectionState } from '@codeo/remote-client';
+import { resetPush } from './push';
 import { selectConfigured, useSettings } from './settings';
 
 export const APP_CLIENT = { name: 'codeo-remote', version: '0.1.0', kind: 'mobile' } as const;
@@ -99,6 +100,26 @@ export function gatewaySession(): GatewaySession {
     onCredentials: (next) => useSettings.getState().setGateway(next),
   });
   return sharedSession;
+}
+
+/**
+ * Forgets the pairing: the phone first revokes itself on the gateway (tokens, push token and relay socket
+ * die there, and the computer lists it as revoked), then erases its credentials. Returns false when the
+ * gateway could not be reached: the pairing is gone from the phone, but the computer must revoke it.
+ */
+export async function forgetPairing(): Promise<boolean> {
+  const session = gatewaySession();
+  let revoked = false;
+  try {
+    await revokeThisDevice(session, { timeoutMs: 5_000 });
+    revoked = true;
+  } catch {
+    /* offline or gateway down: reported to the user */
+  }
+  await resetPush();
+  sharedSession = null;
+  await useSettings.getState().clearGateway();
+  return revoked;
 }
 
 /**

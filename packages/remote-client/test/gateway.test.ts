@@ -16,6 +16,8 @@ import {
   refreshCredentials,
   registerPushToken,
   unregisterPushToken,
+  revokeThisDevice,
+  staleApprovalNotifications,
   ApprovalPushDataSchema,
   type ConnectionState,
   type GatewayCredentials,
@@ -301,5 +303,37 @@ describe('revocation', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(client.state).toBe('unauthorized');
     client.close();
+  });
+
+  it('forgetting the pairing revokes the phone on the gateway, and a phone already revoked counts as revoked', async () => {
+    const creds = await pair();
+    const session = new GatewaySession({ credentials: creds, onCredentials: () => undefined });
+    await revokeThisDevice(session);
+    const devices = (await (await fetch(`${gatewayUrl}/v1/devices`, { headers: { authorization: `Bearer ${runtimeSecret}` } })).json()) as { devices: { deviceId: string; revoked: boolean }[] };
+    expect(devices.devices.find((d) => d.deviceId === creds.deviceId)?.revoked).toBe(true);
+    await expect(revokeThisDevice(session)).resolves.toBeUndefined();
+    await expect(refreshCredentials(creds)).rejects.toMatchObject({ fatal: true });
+  });
+
+  it('reports an unreachable gateway so the user revokes the phone from the computer', async () => {
+    const creds = await pair();
+    const session = new GatewaySession({ credentials: { ...creds, gatewayUrl: `http://127.0.0.1:${await freePort()}` }, onCredentials: () => undefined });
+    await expect(revokeThisDevice(session, { timeoutMs: 1_000 })).rejects.toMatchObject({ code: 'UNREACHABLE' });
+  });
+});
+
+describe('withdrawing approval notifications', () => {
+  const data = (approvalId: string, runtimeId = 'rt_1abc') => ({ type: 'approval' as const, runtimeId, approvalId });
+  it('withdraws only delivered approvals of this runtime that the list, read after them, no longer has pending', () => {
+    const delivered = [
+      { id: 'n1', data: data('apr_decided'), deliveredAt: 1_000 },
+      { id: 'n2', data: data('apr_pending'), deliveredAt: 1_000 },
+      /* Arrived after the list was read: the list may simply not know it yet. */
+      { id: 'n3', data: data('apr_new'), deliveredAt: 3_000 },
+      /* An older pairing's runtime, and something that is not a Codeo approval. */
+      { id: 'n4', data: data('apr_x', 'rt_other'), deliveredAt: 1_000 },
+      { id: 'n5', data: null, deliveredAt: 1_000 },
+    ];
+    expect(staleApprovalNotifications(delivered, { runtimeId: 'rt_1abc', ids: new Set(['apr_pending']), listedAt: 2_000 })).toEqual(['n1']);
   });
 });

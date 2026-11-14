@@ -8,8 +8,8 @@ import { Field } from '@/components/Field';
 import { Screen } from '@/components/Screen';
 import { useT } from '@/lib/i18n';
 import { connectionStateLabel, connectionTone } from '@/lib/presentation';
-import { stopPush, syncPush, usePush, type PushStatus } from '@/lib/push';
-import { gatewaySession, useCommand, useRuntime } from '@/lib/runtime';
+import { syncPush, usePush, type PushStatus } from '@/lib/push';
+import { forgetPairing, gatewaySession, useCommand, useRuntime } from '@/lib/runtime';
 import { useSettings } from '@/lib/settings';
 
 function Row({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
@@ -81,6 +81,9 @@ export default function MoreScreen() {
   const [name, setName] = useState(settings.name);
   const [saving, setSaving] = useState(false);
   const [confirmForget, setConfirmForget] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
+  /* What forgetting the last pairing did, shown once the card is back to "pair". */
+  const [forgotten, setForgotten] = useState<'revoked' | 'local' | null>(null);
   const paired = settings.gateway;
   const runtimeInfo = useCommand('runtime.info', {});
 
@@ -165,23 +168,42 @@ export default function MoreScreen() {
                 <Button
                   variant="ghost"
                   label={confirmForget ? t('settings.remote.forgetConfirm') : t('settings.remote.forget')}
+                  disabled={forgetting}
                   onPress={() => {
                     if (!confirmForget) {
                       setConfirmForget(true);
                       return;
                     }
-                    setConfirmForget(false);
-                    void stopPush(gatewaySession()).finally(() => settings.clearGateway());
+                    setForgetting(true);
+                    void forgetPairing()
+                      .then((revoked) => setForgotten(revoked ? 'revoked' : 'local'))
+                      .finally(() => {
+                        setForgetting(false);
+                        setConfirmForget(false);
+                      });
                   }}
                 />
               </View>
             </>
           ) : (
             <>
+              {forgotten ? (
+                <Typo variant="body-sm" color={forgotten === 'local' ? 'coral' : 'ink-muted'}>
+                  {t(forgotten === 'local' ? 'settings.remote.forgotten.local' : 'settings.remote.forgotten.revoked')}
+                </Typo>
+              ) : null}
               <Typo variant="body-sm" color="ink-muted">
                 {t('settings.remote.hint')}
               </Typo>
-              <Button variant="primary" icon="shield" label={t('settings.remote.pair')} onPress={() => router.push('/pair')} />
+              <Button
+                variant="primary"
+                icon="shield"
+                label={t('settings.remote.pair')}
+                onPress={() => {
+                  setForgotten(null);
+                  router.push('/pair');
+                }}
+              />
             </>
           )}
         </Card>

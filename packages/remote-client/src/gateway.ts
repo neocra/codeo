@@ -374,6 +374,49 @@ export async function unregisterPushToken(session: GatewaySession, opts: HttpOpt
   if (res.status !== 200) throw new GatewayClientError('BAD_RESPONSE', errorMessage(res.body, `unexpected status ${res.status}`), res.status);
 }
 
+/**
+ * `POST /v1/devices/me/revoke`: the phone revokes its own pairing before forgetting it, so the computer no
+ * longer lists it as active and its tokens die server-side. A phone the gateway already revoked (or whose
+ * refresh token is gone) counts as revoked. Network failures throw: the caller tells the user to revoke the
+ * phone from the computer.
+ */
+export async function revokeThisDevice(session: GatewaySession, opts: HttpOptions = {}): Promise<void> {
+  const url = `${normalizeGatewayUrl(session.credentials.gatewayUrl)}/v1/devices/me/revoke`;
+  try {
+    const res = await withAccessToken(session, (bearer) => requestJson('POST', url, {}, { ...opts, bearer }));
+    if (res.status !== 200) throw new GatewayClientError('BAD_RESPONSE', errorMessage(res.body, `unexpected status ${res.status}`), res.status);
+  } catch (err) {
+    if (err instanceof GatewayClientError && err.fatal) return;
+    throw err;
+  }
+}
+
+export interface DeliveredNotification {
+  id: string;
+  /** Null when it is not one of the gateway's approval notifications. */
+  data: ApprovalPushData | null;
+  /** When the system delivered it (ms). */
+  deliveredAt: number;
+}
+
+export interface PendingApprovals {
+  runtimeId: string;
+  ids: ReadonlySet<string>;
+  /** When this pending list was read from the runtime (ms). */
+  listedAt: number;
+}
+
+/**
+ * Ids of the delivered notifications to withdraw: approval notifications of the runtime whose approval is no
+ * longer pending (decided here, on the computer, or expired). A notification delivered after the list was
+ * read may be for an approval the list does not know yet, so it is kept; notifications of another runtime too.
+ */
+export function staleApprovalNotifications(delivered: readonly DeliveredNotification[], pending: PendingApprovals): string[] {
+  return delivered
+    .filter((n) => n.data !== null && n.data.runtimeId === pending.runtimeId && n.deliveredAt <= pending.listedAt && !pending.ids.has(n.data.approvalId))
+    .map((n) => n.id);
+}
+
 /** The data of a notification sent by the gateway (`apps/gateway/src/push`). Anything else is ignored. */
 export const ApprovalPushDataSchema = z.object({
   type: z.literal('approval'),

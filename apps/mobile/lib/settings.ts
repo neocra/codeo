@@ -65,7 +65,7 @@ export interface SettingsState {
   setName: (name: string) => Promise<void>;
   /** Stores paired (or rotated) gateway credentials in the keychain. */
   setGateway: (credentials: GatewayCredentials) => Promise<void>;
-  /** Forgets the pairing on this phone (the desktop still lists the device until it is revoked there). */
+  /** Erases the pairing from this phone. Use `forgetPairing` (lib/runtime), which revokes it on the gateway first. */
   clearGateway: () => Promise<void>;
 }
 
