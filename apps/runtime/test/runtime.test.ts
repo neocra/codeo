@@ -235,7 +235,9 @@ describe('runtime end-to-end over the protocol', () => {
 });
 
 describe('orchestration and worktrees', () => {
-  const waitTask = (taskId: string, status: string) => waitFor(async () => (await client.request('tasks.get', { taskId })).status === status);
+  /* Tasks here run real `git worktree` commands for each agent step: a Windows CI runner can need several seconds
+   * for a three-step pipeline, and a step still running would spill into the next test's counts. */
+  const waitTask = (taskId: string, status: string) => waitFor(async () => (await client.request('tasks.get', { taskId })).status === status, 20_000);
   const wsId = async () => (await client.request('workspaces.list', {}))[0]!.id;
   const agent = (extra: Record<string, unknown> = {}) => ({ provider: 'claude-code' as const, ...extra });
 
