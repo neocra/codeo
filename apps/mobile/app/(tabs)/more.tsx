@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Linking, View } from 'react-native';
 import type { Locale } from '@codeo/i18n';
 import { runtimeFingerprint } from '@codeo/remote-client';
 import { Button, Card, Divider, FilterPills, Section, StatusPill, Typo, useTheme } from '@codeo/ui-mobile';
@@ -8,7 +8,8 @@ import { Field } from '@/components/Field';
 import { Screen } from '@/components/Screen';
 import { useT } from '@/lib/i18n';
 import { connectionStateLabel, connectionTone } from '@/lib/presentation';
-import { useCommand, useRuntime } from '@/lib/runtime';
+import { stopPush, syncPush, usePush, type PushStatus } from '@/lib/push';
+import { gatewaySession, useCommand, useRuntime } from '@/lib/runtime';
 import { useSettings } from '@/lib/settings';
 
 function Row({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
@@ -28,6 +29,45 @@ function Row({ label, value, mono = true }: { label: string; value: string; mono
 function formatDate(iso: string, locale: Locale): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+const PUSH_STATUS_KEY = {
+  idle: 'mobile.push.status.pending',
+  pending: 'mobile.push.status.pending',
+  enabled: 'mobile.push.status.enabled',
+  unconfigured: 'mobile.push.status.unconfigured',
+  denied: 'mobile.push.status.denied',
+  off: 'mobile.push.status.off',
+  unsupported: 'mobile.push.status.unsupported',
+  error: 'mobile.push.status.error',
+} as const satisfies Record<PushStatus, string>;
+
+/** Whether this phone is told about approvals while Codeo Remote is in the background. */
+function PushCard({ connected }: { connected: boolean }) {
+  const t = useT();
+  const { theme } = useTheme();
+  const { status, error } = usePush();
+  const locale = useSettings((s) => s.locale);
+  const problem = status === 'error' || status === 'unconfigured';
+  return (
+    <Section kicker={t('mobile.push.title')}>
+      <Card style={{ gap: theme.spacing['space-3'] }}>
+        <Typo variant="body-sm" color={problem ? 'coral' : 'ink-muted'}>
+          {t(PUSH_STATUS_KEY[status], { reason: error ?? '' })}
+        </Typo>
+        {status === 'off' || status === 'error' ? (
+          <Button
+            variant="secondary"
+            label={t('mobile.push.enable')}
+            disabled={!connected}
+            onPress={() => void syncPush({ session: gatewaySession(), locale, prompt: true })}
+          />
+        ) : status === 'denied' ? (
+          <Button variant="secondary" label={t('mobile.push.openSettings')} onPress={() => void Linking.openSettings()} />
+        ) : null}
+      </Card>
+    </Section>
+  );
 }
 
 /** Réglages: remote access (gateway pairing), direct runtime connection, runtime info, profile, language. */
@@ -131,7 +171,7 @@ export default function MoreScreen() {
                       return;
                     }
                     setConfirmForget(false);
-                    void settings.clearGateway();
+                    void stopPush(gatewaySession()).finally(() => settings.clearGateway());
                   }}
                 />
               </View>
@@ -146,6 +186,8 @@ export default function MoreScreen() {
           )}
         </Card>
       </Section>
+
+      {paired ? <PushCard connected={mode === 'gateway' && state === 'connected'} /> : null}
 
       <Section kicker={t('settings.connection')}>
         <Card style={{ gap: theme.spacing['space-4'] }}>

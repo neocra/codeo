@@ -76,7 +76,7 @@ async function startGateway(store: GatewayStore = createMemoryStore(), port = 0)
     {
       env: 'test', port, host: '127.0.0.1', publicUrl: 'http://127.0.0.1', secret: 'test-gateway-secret-0123456789abcdef0123456789',
       tls: null, trustProxy: false, pairingCodeTtlSeconds: 300, accessTokenTtlSeconds: 900, refreshTokenTtlSeconds: 3600, logLevel: 'error',
-      database: null, auditRetentionDays: 90,
+      database: null, auditRetentionDays: 90, push: { apns: null, fcm: null },
     },
     store,
     { logger: quiet, maintenanceIntervalMs: 0 },

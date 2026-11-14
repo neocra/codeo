@@ -135,15 +135,24 @@ interface HttpOptions {
   timeoutMs?: number | undefined;
 }
 
-async function postJson(url: string, body: unknown, opts: HttpOptions): Promise<{ status: number; body: unknown }> {
+async function requestJson(
+  method: 'POST' | 'PUT' | 'DELETE',
+  url: string,
+  body: unknown,
+  opts: HttpOptions & { bearer?: string | undefined },
+): Promise<{ status: number; body: unknown }> {
   const doFetch: FetchLike = opts.fetch ?? ((u, init) => fetch(u, init));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
   try {
     const res = await doFetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify(body),
+      method,
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        ...(opts.bearer !== undefined ? { authorization: `Bearer ${opts.bearer}` } : {}),
+      },
+      body: JSON.stringify(body ?? {}),
       signal: controller.signal,
     });
     let json: unknown = null;
@@ -159,6 +168,8 @@ async function postJson(url: string, body: unknown, opts: HttpOptions): Promise<
     clearTimeout(timer);
   }
 }
+
+const postJson = (url: string, body: unknown, opts: HttpOptions) => requestJson('POST', url, body, opts);
 
 function errorMessage(body: unknown, fallback: string): string {
   const parsed = ErrorBodySchema.safeParse(body);
@@ -318,3 +329,55 @@ export class GatewaySession {
     return this.inflight;
   }
 }
+
+/** What the phone registers to be told about approvals while the app is in the background. */
+export type PushRegistration =
+  | { provider: 'apns'; token: string; environment: 'sandbox' | 'production'; locale: 'fr' | 'en' }
+  | { provider: 'fcm'; token: string; locale: 'fr' | 'en' };
+
+/** `enabled`: the gateway can send through this provider. `unconfigured`: it has no credentials for it. */
+export type PushDelivery = 'enabled' | 'unconfigured';
+
+const PushRegisterResponseSchema = z.object({ provider: z.enum(['apns', 'fcm']), delivery: z.enum(['enabled', 'unconfigured']) });
+
+async function withAccessToken(
+  session: GatewaySession,
+  call: (accessToken: string) => Promise<{ status: number; body: unknown }>,
+): Promise<{ status: number; body: unknown }> {
+  let res = await call(await session.accessToken());
+  /* An access token refused before its expiry (gateway restarted with another secret, clock skew): refresh once. */
+  if (res.status === 401) res = await call(await session.accessToken({ force: true }));
+  if (res.status === 401) throw new GatewayClientError('UNAUTHORIZED', errorMessage(res.body, 'unauthorized'), 401);
+  if (res.status === 403) throw new GatewayClientError('REVOKED', errorMessage(res.body, 'device revoked'), 403);
+  if (res.status === 429) throw new GatewayClientError('RATE_LIMITED', errorMessage(res.body, 'too many requests'), 429);
+  if (res.status >= 500) throw new GatewayClientError('UNREACHABLE', errorMessage(res.body, 'gateway error'), res.status);
+  return res;
+}
+
+/**
+ * `PUT /v1/devices/me/push`: tells the gateway where to send approval notifications for this phone. The
+ * notifications carry ids only; the app reads the approval itself over the authenticated relay.
+ */
+export async function registerPushToken(session: GatewaySession, registration: PushRegistration, opts: HttpOptions = {}): Promise<PushDelivery> {
+  const url = `${normalizeGatewayUrl(session.credentials.gatewayUrl)}/v1/devices/me/push`;
+  const res = await withAccessToken(session, (bearer) => requestJson('PUT', url, registration, { ...opts, bearer }));
+  if (res.status !== 200) throw new GatewayClientError('BAD_RESPONSE', errorMessage(res.body, `unexpected status ${res.status}`), res.status);
+  const parsed = PushRegisterResponseSchema.safeParse(res.body);
+  if (!parsed.success) throw new GatewayClientError('BAD_RESPONSE', 'unexpected push registration response');
+  return parsed.data.delivery;
+}
+
+/** `DELETE /v1/devices/me/push`: stop notifications to this phone (forgetting the pairing, turning them off). */
+export async function unregisterPushToken(session: GatewaySession, opts: HttpOptions = {}): Promise<void> {
+  const url = `${normalizeGatewayUrl(session.credentials.gatewayUrl)}/v1/devices/me/push`;
+  const res = await withAccessToken(session, (bearer) => requestJson('DELETE', url, undefined, { ...opts, bearer }));
+  if (res.status !== 200) throw new GatewayClientError('BAD_RESPONSE', errorMessage(res.body, `unexpected status ${res.status}`), res.status);
+}
+
+/** The data of a notification sent by the gateway (`apps/gateway/src/push`). Anything else is ignored. */
+export const ApprovalPushDataSchema = z.object({
+  type: z.literal('approval'),
+  runtimeId: z.string().min(3).max(80),
+  approvalId: z.string().min(1).max(120),
+});
+export type ApprovalPushData = z.infer<typeof ApprovalPushDataSchema>;

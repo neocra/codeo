@@ -4,6 +4,27 @@ _Updated: 2026-11-14_
 
 ## Current milestone: Phase 6 — remote access (in progress)
 
+### Phase 6, step 5: push notifications for approvals (done; real APNs / FCM delivery not exercised)
+- Gateway (`apps/gateway/src/push/`): the relay hands every runtime event to a dispatcher, which sends one push per
+  pending, unexpired `ApprovalRequested` (deduplicated by approval id) to the runtime's non-revoked phones holding
+  `approval:decide`, rate-limited to 30 per runtime per minute. No runtime change: the gateway already relays the
+  event. Payload content-free: localized "Codeo / Une approbation attend votre décision." (`push.approval.*` in
+  `@codeo/i18n`) and `type` / `runtimeId` / `approvalId` only.
+- Senders on Node built-ins, no SDK: APNs token auth (ES256 `.p8` JWT cached 50 min, HTTP/2 to the sandbox or
+  production host per token, expiry and collapse id from the approval) and FCM HTTP v1 (RS256 service-account
+  assertion → OAuth token, Android channel `approvals`). Dead tokens (410, `BadDeviceToken`, `UNREGISTERED`…) are
+  deleted; every send is audited. Configured by `APNS_KEY_PATH` + `APNS_KEY_ID` + `APNS_TEAM_ID` (+ `APNS_TOPIC`) and
+  `FCM_SERVICE_ACCOUNT_PATH`; `/healthz` lists the enabled providers.
+- Storage: `PushTokenStore` (memory + PostgreSQL migration 2, `gateway_push_tokens`, unique per provider token so a
+  re-paired phone gets one push, not one per old pairing); revoking a device deletes its token.
+- API: `PUT` / `DELETE /v1/devices/me/push` with the device access token; the provider must match the paired
+  platform; the answer says `delivery: enabled | unconfigured` so a gateway without credentials is reported, not faked.
+- Remote client: `registerPushToken` / `unregisterPushToken` (refresh once on a 401) and `ApprovalPushDataSchema`.
+- Mobile: `expo-notifications` + `expo-application`; permission asked once on the first connection after pairing,
+  token re-sent on rotation or language change, foreground banners suppressed, a tapped notification for the paired
+  runtime opens Approbations, Plus shows a Notifications card (enabled / gateway not configured / denied → open
+  settings / off → turn on / unavailable in Expo Go), forgetting the pairing unregisters first.
+
 ### Demo data for review diffs and pull requests (done and verified)
 - The demo dataset (`apps/runtime/src/demo`) now has four reviewed tasks that ran in a worktree: ELY-142 and CC-91 in
   review, ELY-136 and CC-88 completed. Their lanes are fictional `demo://.codeo/worktrees/…` folders on a real
@@ -197,7 +218,7 @@ _Updated: 2026-11-14_
 - Remote access: mobile pairing was run in the iOS simulator with a code typed by hand; the camera scan of the desktop's
   QR code and a physical phone (keychain, network changes) are not verified yet. With `DATABASE_URL` unset (development) the gateway keeps
   registrations in memory, so a restart means turning remote access on again; with PostgreSQL they survive. One gateway
-  instance per runtime: rate limiters and the relay are per process. No certificate pinning, no push notifications; the runtime proves its identity at
+  instance per runtime: rate limiters and the relay are per process. No certificate pinning; push notifications need APNs / FCM credentials on the gateway and a development build of the app (Expo Go cannot receive them), and a decided approval does not withdraw its notification; the runtime proves its identity at
   connection time but frames are not signed end to end, and Face ID is enforced by the app only. "Forget this pairing" on the phone does not revoke it on the gateway (revoke from the desktop).
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
@@ -211,7 +232,21 @@ _Updated: 2026-11-14_
 
 ### Next priorities
 1. Scan the desktop's QR code from a physical phone (QR pairing pins the runtime key; Face ID match on a real device).
-2. Push notifications for approvals (APNs/FCM, content-free payloads) — `docs/security/remote-access.md` §5.
+2. Receive an approval notification on a development build with real APNs / FCM credentials (end-to-end delivery,
+   tap → Approbations).
+
+## Verification log — 2026-11-14 (phase 6, push notifications)
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck` / `pnpm lint` | 17/17 clean |
+| `pnpm test` | all pass; gateway 110 on the memory store + PostgreSQL/PGlite (new: push token store contract; registration — delivery reported `unconfigured` without credentials, 401 without a device token, wrong provider for the platform or malformed token 400, token deleted on revocation; dispatch through the relay — one push per pending approval per phone in its language, no approval content on the wire, replay not pushed twice, resolved / expired / other events ignored, phones without `approval:decide` skipped, dead tokens deleted; APNs wire format with a verified ES256 JWT, host per environment, token cached then renewed, dead-token reasons; FCM OAuth assertion verified, HTTP v1 message, `UNREGISTERED`; config all-or-none), remote-client 20 (register / unregister against a real gateway, notification data schema), runtime 55 |
+| `pnpm --filter @codeo/gateway build` | bundles (`@codeo/i18n` included) |
+| iOS simulator (iPhone 15 Pro, Expo Go SDK 54) + local gateway + runtime on a throwaway data dir | paired with the manual code → connected; Plus shows the new Notifications card, which reports that Expo Go cannot receive pushes (no permission prompt, no registration attempted). `expo config` adds the `aps-environment` entitlement |
+
+Not verified: delivery through Apple's or Google's servers (no APNs key or Firebase service account in this
+session), the permission prompt and token registration on a development build, a tapped notification opening
+Approbations on a device.
 
 ## Verification log — 2026-11-13 (phase 6, persistent gateway store)
 

@@ -6,6 +6,7 @@ import type { AuthService } from './auth';
 import { iso, type Clock } from './clock';
 import { GatewayError } from './errors';
 import type { PairingService } from './pairing';
+import type { PushDispatcher } from './push';
 import { createRateLimiter } from './rate-limit';
 import type { Relay } from './relay';
 import type { DeviceRecord, GatewayStore, RuntimeRecord } from './store';
@@ -16,6 +17,7 @@ export interface RouteDeps {
   auth: AuthService;
   pairing: PairingService;
   relay: Relay;
+  push: PushDispatcher;
   audit: Auditor;
   clock: Clock;
   log: Logger;
@@ -40,6 +42,24 @@ const PairingCompleteBody = z.object({
 });
 
 const RefreshBody = z.object({ refreshToken: z.string().min(16).max(512) });
+
+/*
+ * A phone's push token. APNs device tokens are hex; FCM registration tokens are base64url-ish with ':'.
+ * The provider follows the platform the device paired as.
+ */
+const PushTokenBody = z.discriminatedUnion('provider', [
+  z.object({
+    provider: z.literal('apns'),
+    token: z.string().regex(/^[0-9a-fA-F]{64,200}$/, 'not an APNs device token'),
+    environment: z.enum(['sandbox', 'production']).default('production'),
+    locale: z.enum(['fr', 'en']).default('fr'),
+  }),
+  z.object({
+    provider: z.literal('fcm'),
+    token: z.string().regex(/^[A-Za-z0-9:_\-.]{32,4096}$/, 'not an FCM registration token'),
+    locale: z.enum(['fr', 'en']).default('fr'),
+  }),
+]);
 
 const DeviceIdParams = z.object({ id: z.string().min(3).max(80) });
 
@@ -67,8 +87,11 @@ function deviceView(d: DeviceRecord, connected: boolean) {
   };
 }
 
+const PROVIDER_FOR_PLATFORM = { ios: 'apns', android: 'fcm' } as const;
+
 export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
-  const { store, auth, pairing, relay, audit, clock, log } = deps;
+  const { store, auth, pairing, relay, push, audit, clock, log } = deps;
+  const pushLimiter = createRateLimiter({ max: 30, windowMs: 60 * 60_000, clock });
   const registerLimiter = createRateLimiter({ max: 20, windowMs: 60 * 60_000, clock });
 
   const requireRuntime = (req: FastifyRequest): Promise<RuntimeRecord> => auth.authenticateRuntime(req.headers.authorization);
@@ -79,6 +102,7 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
       version: deps.version,
       uptimeSeconds: Math.floor((clock() - deps.startedAt) / 1000),
       runtimesConnected: relay.connectedRuntimeCount(),
+      push: push.enabled,
     }));
 
     app.post('/v1/runtimes/register', async (req, reply) => {
@@ -125,6 +149,36 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
       const runtime = await requireRuntime(req);
       const devices = await store.devices.listByRuntime(runtime.runtimeId);
       return { devices: devices.map((d) => deviceView(d, relay.isDeviceConnected(d.deviceId))) };
+    });
+
+    /* The phone's own push registration. `delivery` says whether this gateway can actually send through the
+     * provider: a gateway without APNs / FCM credentials keeps the token and reports it, it never pretends. */
+    app.put('/v1/devices/me/push', async (req) => {
+      const { device } = await auth.authenticateDevice(req.headers.authorization);
+      if (!pushLimiter.hit(device.deviceId).allowed) throw new GatewayError(429, 'RATE_LIMITED', 'too many push registrations');
+      const body = parseWith(PushTokenBody, req.body);
+      if (PROVIDER_FOR_PLATFORM[device.platform] !== body.provider) {
+        throw new GatewayError(400, 'INVALID_PARAMS', `a ${device.platform} device registers ${PROVIDER_FOR_PLATFORM[device.platform]} tokens`);
+      }
+      await store.pushTokens.upsert({
+        deviceId: device.deviceId,
+        runtimeId: device.runtimeId,
+        provider: body.provider,
+        token: body.token,
+        environment: body.provider === 'apns' ? body.environment : 'production',
+        locale: body.locale,
+        updatedAt: iso(clock()),
+      });
+      const delivery = push.enabled.includes(body.provider) ? 'enabled' : 'unconfigured';
+      await audit({ actor: `device:${device.deviceId}`, action: 'push.register', target: device.deviceId, ok: true, detail: `provider=${body.provider} delivery=${delivery}` });
+      return { provider: body.provider, delivery };
+    });
+
+    app.delete('/v1/devices/me/push', async (req) => {
+      const { device } = await auth.authenticateDevice(req.headers.authorization);
+      const removed = await store.pushTokens.delete(device.deviceId);
+      await audit({ actor: `device:${device.deviceId}`, action: 'push.unregister', target: device.deviceId, ok: true, detail: `removed=${removed}` });
+      return { removed };
     });
 
     app.post('/v1/devices/:id/revoke', async (req) => {

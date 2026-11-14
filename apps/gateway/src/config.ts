@@ -23,7 +23,21 @@ const EnvSchema = z.object({
     .optional(),
   DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  /** APNs token auth (.p8 key from the Apple developer account). All three or none. */
+  APNS_KEY_PATH: z.string().min(1).optional(),
+  APNS_KEY_ID: z.string().regex(/^[A-Z0-9]{10}$/, 'APNS_KEY_ID must be the 10-character key id').optional(),
+  APNS_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/, 'APNS_TEAM_ID must be the 10-character team id').optional(),
+  /** The iOS app's bundle id. */
+  APNS_TOPIC: z.string().min(1).default('com.codeo.remote'),
+  /** Google service-account JSON key of the Firebase project the Android app is registered in. */
+  FCM_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
 });
+
+/** Push credentials; a provider left null is reported as not configured, never faked. */
+export interface PushConfig {
+  apns: { keyPath: string; keyId: string; teamId: string; topic: string } | null;
+  fcm: { serviceAccountPath: string } | null;
+}
 
 export interface GatewayConfig {
   env: 'development' | 'test' | 'production';
@@ -42,6 +56,7 @@ export interface GatewayConfig {
   /** PostgreSQL store; null = in-memory (everything is lost on restart). Never logged as is. */
   database: { url: string; poolSize: number } | null;
   auditRetentionDays: number;
+  push: PushConfig;
 }
 
 export interface LoadConfigOptions {
@@ -90,6 +105,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, opts: LoadConfi
     }
   }
 
+  const apnsParts = [e.APNS_KEY_PATH, e.APNS_KEY_ID, e.APNS_TEAM_ID];
+  if (apnsParts.some((v) => v !== undefined) && !apnsParts.every((v) => v !== undefined)) {
+    throw new Error('APNS_KEY_PATH, APNS_KEY_ID and APNS_TEAM_ID must be set together');
+  }
+  const push: PushConfig = {
+    apns:
+      e.APNS_KEY_PATH && e.APNS_KEY_ID && e.APNS_TEAM_ID
+        ? { keyPath: e.APNS_KEY_PATH, keyId: e.APNS_KEY_ID, teamId: e.APNS_TEAM_ID, topic: e.APNS_TOPIC }
+        : null,
+    fcm: e.FCM_SERVICE_ACCOUNT_PATH ? { serviceAccountPath: e.FCM_SERVICE_ACCOUNT_PATH } : null,
+  };
+
   return {
     env: e.NODE_ENV,
     port: e.PORT,
@@ -104,5 +131,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, opts: LoadConfi
     logLevel: e.LOG_LEVEL,
     database: e.DATABASE_URL ? { url: e.DATABASE_URL, poolSize: e.DATABASE_POOL_SIZE } : null,
     auditRetentionDays: e.AUDIT_RETENTION_DAYS,
+    push,
   };
 }
