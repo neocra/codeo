@@ -86,9 +86,10 @@ describe('push registration', () => {
     for (let i = 0; i < 30; i++) expect((await put({ authorization: `Bearer ${phone.accessToken}` })).statusCode).toBe(200);
     expect((await put({ authorization: `Bearer ${phone.accessToken}` })).statusCode).toBe(429);
     /* Unauthenticated calls from one address stop before any token is checked. */
-    for (let i = 0; i < 89; i++) await put({});
-    expect((await put({})).statusCode).toBe(429);
-    expect((await ctx.app.inject({ method: 'DELETE', url: '/v1/devices/me/push' })).statusCode).toBe(429);
+    for (let i = 0; i < 29; i++) expect((await put({})).statusCode).toBe(401);
+    const limited = await put({});
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
   });
 
   it('forgets the token when the desktop revokes the phone', async () => {

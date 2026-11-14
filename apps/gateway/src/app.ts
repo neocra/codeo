@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import Fastify, { type FastifyHttpOptions, type FastifyInstance } from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import { createLogger, type Logger } from '@codeo/shared-utils';
 import { createAuditor } from './audit';
@@ -117,6 +118,8 @@ export async function buildApp(config: GatewayConfig, store: GatewayStore, opts:
     store.pushTokens.delete(deviceId).catch((err: unknown) => log.warn('push token removal failed', { deviceId, err: err instanceof Error ? err.message : String(err) }));
   });
 
+  /* Per-address limits declared on each HTTP route (`config.rateLimit`); nothing is limited by default. */
+  await app.register(rateLimit, { global: false });
   await app.register(websocket, { options: { maxPayload: RELAY_MAX_FRAME_BYTES } });
   await app.register(relay.plugin);
   await app.register(createRoutes({ store, auth, pairing, relay, push, audit, clock, log: log.child('http'), version: GATEWAY_VERSION, startedAt }));

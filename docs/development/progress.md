@@ -19,6 +19,8 @@ _Updated: 2026-11-14_
   re-paired phone gets one push, not one per old pairing); revoking a device deletes its token.
 - API: `PUT` / `DELETE /v1/devices/me/push` with the device access token; the provider must match the paired
   platform; the answer says `delivery: enabled | unconfigured` so a gateway without credentials is reported, not faked.
+- Every gateway HTTP route now declares a per-address limit with `@fastify/rate-limit` (`config.rateLimit`, checked
+  before credentials; `x-ratelimit-*` headers), on top of the existing per-key limiters (registration, push per device).
 - Remote client: `registerPushToken` / `unregisterPushToken` (refresh once on a 401) and `ApprovalPushDataSchema`.
 - Mobile: `expo-notifications` + `expo-application`; permission asked once on the first connection after pairing,
   token re-sent on rotation or language change, foreground banners suppressed, a tapped notification for the paired

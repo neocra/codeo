@@ -91,18 +91,18 @@ const PROVIDER_FOR_PLATFORM = { ios: 'apns', android: 'fcm' } as const;
 
 export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
   const { store, auth, pairing, relay, push, audit, clock, log } = deps;
-  /* Per address before authentication (token checks are not free), then per device. */
-  const pushIpLimiter = createRateLimiter({ max: 120, windowMs: 60 * 60_000, clock });
+  /* Every route also has a per-address limit (`config.rateLimit`, @fastify/rate-limit) checked in onRequest,
+   * before any credential is verified; the limiters below add per-key budgets on top. */
   const pushLimiter = createRateLimiter({ max: 30, windowMs: 60 * 60_000, clock });
-  const limitPush = (key: string, limiter = pushLimiter) => {
-    if (!limiter.hit(key).allowed) throw new GatewayError(429, 'RATE_LIMITED', 'too many push registrations');
+  const limitPush = (deviceId: string) => {
+    if (!pushLimiter.hit(deviceId).allowed) throw new GatewayError(429, 'RATE_LIMITED', 'too many push registrations');
   };
   const registerLimiter = createRateLimiter({ max: 20, windowMs: 60 * 60_000, clock });
 
   const requireRuntime = (req: FastifyRequest): Promise<RuntimeRecord> => auth.authenticateRuntime(req.headers.authorization);
 
   return async (app) => {
-    app.get('/healthz', async () => ({
+    app.get('/healthz', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async () => ({
       ok: true,
       version: deps.version,
       uptimeSeconds: Math.floor((clock() - deps.startedAt) / 1000),
@@ -110,7 +110,7 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
       push: push.enabled,
     }));
 
-    app.post('/v1/runtimes/register', async (req, reply) => {
+    app.post('/v1/runtimes/register', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
       const limit = registerLimiter.hit(req.ip);
       if (!limit.allowed) throw new GatewayError(429, 'RATE_LIMITED', 'too many registrations from this address');
       const body = parseWith(RegisterRuntimeBody, req.body);
@@ -133,24 +133,24 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
       return reply.code(201).send({ runtimeId, runtimeSecret: secret, ownerAccountId, createdAt });
     });
 
-    app.post('/v1/pairing/start', async (req, reply) => {
+    app.post('/v1/pairing/start', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
       const runtime = await requireRuntime(req);
       const result = await pairing.start(runtime);
       return reply.code(201).send(result);
     });
 
-    app.post('/v1/pairing/complete', async (req, reply) => {
+    app.post('/v1/pairing/complete', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
       const body = parseWith(PairingCompleteBody, req.body);
       const result = await pairing.complete(body, { ip: req.ip });
       return reply.code(201).send(result);
     });
 
-    app.post('/v1/auth/refresh', async (req) => {
+    app.post('/v1/auth/refresh', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req) => {
       const body = parseWith(RefreshBody, req.body);
       return auth.refresh(body.refreshToken, { ip: req.ip });
     });
 
-    app.get('/v1/devices', async (req) => {
+    app.get('/v1/devices', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req) => {
       const runtime = await requireRuntime(req);
       const devices = await store.devices.listByRuntime(runtime.runtimeId);
       return { devices: devices.map((d) => deviceView(d, relay.isDeviceConnected(d.deviceId))) };
@@ -158,8 +158,7 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
 
     /* The phone's own push registration. `delivery` says whether this gateway can actually send through the
      * provider: a gateway without APNs / FCM credentials keeps the token and reports it, it never pretends. */
-    app.put('/v1/devices/me/push', async (req) => {
-      limitPush(req.ip, pushIpLimiter);
+    app.put('/v1/devices/me/push', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
       const { device } = await auth.authenticateDevice(req.headers.authorization);
       limitPush(device.deviceId);
       const body = parseWith(PushTokenBody, req.body);
@@ -180,8 +179,7 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
       return { provider: body.provider, delivery };
     });
 
-    app.delete('/v1/devices/me/push', async (req) => {
-      limitPush(req.ip, pushIpLimiter);
+    app.delete('/v1/devices/me/push', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
       const { device } = await auth.authenticateDevice(req.headers.authorization);
       limitPush(device.deviceId);
       const removed = await store.pushTokens.delete(device.deviceId);
@@ -189,7 +187,7 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
       return { removed };
     });
 
-    app.post('/v1/devices/:id/revoke', async (req) => {
+    app.post('/v1/devices/:id/revoke', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
       const runtime = await requireRuntime(req);
       const { id } = parseWith(DeviceIdParams, req.params);
       const device = await store.devices.get(id);
