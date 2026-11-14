@@ -2,12 +2,12 @@ import { app, shell, type BrowserWindow } from 'electron';
 import electronUpdater from 'electron-updater';
 import { createLogger } from '@codeo/shared-utils';
 import { IPC, type UpdateStatus } from '../shared/bridge-types';
+import { macZipUrl, releaseTagOf } from './release-urls';
 import { MacSelfInstaller, type ReleaseFile, type StagedMacUpdate } from './mac-installer';
 
 const { autoUpdater } = electronUpdater;
 const log = createLogger({ scope: 'desktop:updates' });
 const RELEASES_URL = 'https://github.com/neocra/codeo/releases/latest';
-const DOWNLOAD_BASE = 'https://github.com/neocra/codeo/releases/download';
 
 /**
  * In-app updates through electron-updater against the GitHub releases of neocra/codeo
@@ -21,6 +21,8 @@ export class UpdateService {
   private window: BrowserWindow | null = null;
   private readonly mac = process.platform === 'darwin' ? new MacSelfInstaller() : null;
   private macFiles: ReleaseFile[] = [];
+  /** The GitHub release tag the update was found under (releases are tagged `0.4.0`, not `v0.4.0`). */
+  private releaseTag: string | null = null;
   private macStaged: StagedMacUpdate | null = null;
   private macSwapScheduled = false;
 
@@ -77,7 +79,8 @@ export class UpdateService {
       const info = result?.updateInfo;
       if (!result || !info || !result.isUpdateAvailable) return this.set({ state: 'up-to-date', availableVersion: null });
       this.macFiles = info.files;
-      return this.set({ state: 'available', availableVersion: info.version, releaseUrl: `https://github.com/neocra/codeo/releases/tag/v${info.version}` });
+      this.releaseTag = releaseTagOf(info);
+      return this.set({ state: 'available', availableVersion: info.version, releaseUrl: `https://github.com/neocra/codeo/releases/tag/${encodeURIComponent(this.releaseTag)}` });
     } catch (err) {
       return this.fail(err);
     }
@@ -104,15 +107,16 @@ export class UpdateService {
 
   private async installMac(mac: MacSelfInstaller): Promise<UpdateStatus> {
     const version = this.status.availableVersion;
+    const tag = this.releaseTag;
     const zip = mac.pickZip(this.macFiles);
     const bundle = await mac.replaceableBundle();
-    if (!version || !zip || !bundle) {
+    if (!version || !tag || !zip || !bundle) {
       log.warn('macOS update cannot be installed in place', { version, zip: zip?.url ?? null, bundle });
       return this.set({ state: 'manual', progress: null });
     }
     this.set({ state: 'downloading', progress: 0, error: null });
     try {
-      const url = `${DOWNLOAD_BASE}/v${version}/${encodeURIComponent(zip.url)}`;
+      const url = macZipUrl(tag, zip.url);
       this.macStaged = await mac.stage(url, zip, bundle, (progress) => this.set({ progress }));
       this.set({ state: 'ready', progress: 100 });
       this.restartIntoUpdate();
