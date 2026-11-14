@@ -386,6 +386,8 @@ export const fr = {
   'runtime.error.workspace.hasWorktrees': 'Supprimez d’abord les {count} worktree(s) associés ({branches}).',
   'runtime.error.demo.realRepository': 'Mode démo : les dépôts réels se gèrent en mode réel.',
   'runtime.error.demo.pullRequests': 'Mode démo : les pull requests s’ouvrent en mode réel.',
+  'runtime.error.demo.pullRequestSync': 'Mode démo : ces pull requests sont fictives, rien n’est lu sur GitHub.',
+  'runtime.error.demo.noDiff': 'Mode démo : ce worktree n’a pas de changements simulés.',
   'runtime.error.demo.remoteAccess': 'Mode démo : l’accès distant se configure en mode réel.',
   'runtime.error.plan.singleOneAgent': 'Le mode simple utilise exactement un agent.',
   'runtime.error.plan.bestOfNMin': 'Best-of-N demande au moins deux agents.',

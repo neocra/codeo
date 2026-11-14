@@ -1,8 +1,11 @@
-import type { AgentProviderId, AgentRole, ExecutionMode, AgentSession, ApprovalRequest, Repository, SessionEntry, SessionStatus, Subtask, Task, TaskStatus, Workspace } from '@codeo/domain';
+import type { AgentProviderId, AgentRole, ExecutionMode, AgentSession, ApprovalRequest, CICheck, PullRequest, Repository, SessionEntry, SessionStatus, Subtask, Task, TaskStatus, Workspace, Worktree } from '@codeo/domain';
+import { worktreeBranch } from '../services/worktrees';
+import { DEMO_WORKTREE_IDS, demoWorktreeDiff } from './diffs';
 
 /**
  * Fictional data for demo mode: two workspaces (Elyndor, a Unity game, and Codeo Cloud, a
- * SaaS monorepo) with tasks, transcripts and past approvals. Paths use the `demo://` scheme
+ * SaaS monorepo) with tasks, transcripts, past approvals, reviewed worktrees (their diffs are in `diffs.ts`)
+ * and pull requests. Paths use the `demo://` scheme
  * so they can never be mistaken for — or resolved to — a real folder on the machine.
  */
 export interface DemoDataset {
@@ -11,6 +14,8 @@ export interface DemoDataset {
   sessions: AgentSession[];
   entries: SessionEntry[];
   approvals: ApprovalRequest[];
+  worktrees: Worktree[];
+  pullRequests: PullRequest[];
 }
 
 export const DEMO_PATH_PREFIX = 'demo://';
@@ -105,6 +110,27 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
     },
   ];
 
+  /* Tasks that ran in a worktree: their lane (a fictional folder, like the repositories) and its scripted diff. */
+  const laneSpecs: { id: string; taskId: string; key: string; title: string; repository: Repository; createdMinAgo: number }[] = [
+    { id: DEMO_WORKTREE_IDS.ely142, taskId: 'task_demo_ely142', key: 'ELY-142', title: 'Empilement des objets dans l’inventaire', repository: elyUnity, createdMinAgo: 95 },
+    { id: DEMO_WORKTREE_IDS.ely136, taskId: 'task_demo_ely136', key: 'ELY-136', title: 'Sauvegarde dans le cloud', repository: elyUnity, createdMinAgo: 60 * 6 },
+    { id: DEMO_WORKTREE_IDS.cc88, taskId: 'task_demo_cc88', key: 'CC-88', title: 'Export CSV des factures', repository: cloudRepo, createdMinAgo: 60 * 26 },
+    { id: DEMO_WORKTREE_IDS.cc91, taskId: 'task_demo_cc91', key: 'CC-91', title: 'Limitation de débit de l’API publique', repository: cloudRepo, createdMinAgo: 45 },
+  ];
+  const worktrees: Worktree[] = laneSpecs.map((l) => ({
+    id: l.id,
+    workspaceId: l.repository.workspaceId,
+    repositoryId: l.repository.id,
+    taskId: l.taskId,
+    subtaskId: null,
+    path: `${DEMO_PATH_PREFIX}.codeo/worktrees/${l.repository.name}/${l.taskId}`,
+    branch: worktreeBranch({ id: l.taskId, title: l.title, ticketKey: l.key }, null),
+    baseBranch: l.repository.defaultBranch,
+    dirty: false,
+    createdAt: ago(l.createdMinAgo),
+  }));
+  const laneOf = (taskId: string | null) => worktrees.find((w) => w.taskId === taskId);
+
   const sessionSpecs: SessionSpec[] = [
     {
       id: 'ses_demo_ely142',
@@ -127,6 +153,28 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
         { kind: 'tool_call', toolUseId: 'tu_demo_3', tool: 'Bash', input: { command: 'unity -runTests -testPlatform EditMode' }, status: 'completed', output: '38 tests passés, 0 échec' },
         { kind: 'assistant_text', text: 'L’empilement est en place : `ItemDefinition.maxStack` (99 par défaut), fusion automatique au ramassage et séparation avec Maj+clic. Deux tests ajoutés.', streaming: false },
         { kind: 'result', ok: true, summary: 'Empilement jusqu’à 99, fusion au ramassage, 2 tests ajoutés. À relire.', durationMs: 412_000, costUsd: 0.84, turns: 9 },
+      ],
+    },
+    {
+      id: 'ses_demo_ely136',
+      workspaceId: ely,
+      repositoryId: elyUnity.id,
+      cwd: elyUnity.path,
+      taskId: 'task_demo_ely136',
+      provider: 'claude-code',
+      role: 'developer',
+      title: 'ELY-136 · Sauvegarde dans le cloud',
+      status: 'completed',
+      executionMode: 'manual',
+      model: 'demo-claude',
+      startedMinAgo: 60 * 6 - 5,
+      entries: [
+        { kind: 'user_message', text: 'Ticket: ELY-136\nTâche: Sauvegarde dans le cloud\n\nSynchroniser la sauvegarde locale à chaque point de contrôle ; la copie la plus récente gagne.' },
+        { kind: 'tool_call', toolUseId: 'tu_demo_10', tool: 'Read', input: { file_path: 'Assets/Scripts/Save/SaveManager.cs' }, status: 'completed', output: '(contenu fictif — mode démo)' },
+        { kind: 'tool_call', toolUseId: 'tu_demo_11', tool: 'Write', input: { file_path: 'Assets/Scripts/Save/CloudSaveService.cs' }, status: 'completed', output: '(fichier simulé — aucun fichier écrit)' },
+        { kind: 'tool_call', toolUseId: 'tu_demo_12', tool: 'Edit', input: { file_path: 'Assets/Scripts/Save/SaveManager.cs' }, status: 'completed', output: '(modification simulée — aucun fichier écrit)' },
+        { kind: 'assistant_text', text: '`CloudSaveService` envoie la sauvegarde après chaque point de contrôle et garde la copie la plus récente au chargement.', streaming: false },
+        { kind: 'result', ok: true, summary: 'Synchronisation cloud au point de contrôle. Relu, pull request ouverte.', durationMs: 534_000, costUsd: 0.97, turns: 11 },
       ],
     },
     {
@@ -199,19 +247,21 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
   const entries: SessionEntry[] = [];
   for (const spec of sessionSpecs) {
     const last = ago(spec.startedMinAgo - spec.entries.length);
+    /* A task's agent works in its lane, as a real worktree session does. */
+    const lane = laneOf(spec.taskId);
     sessions.push({
       id: spec.id,
       workspaceId: spec.workspaceId,
       taskId: spec.taskId,
-      subtaskId: null,
+      subtaskId: spec.taskId ? `sub_${spec.taskId}` : null,
       repositoryId: spec.repositoryId,
-      worktreeId: null,
+      worktreeId: lane?.id ?? null,
       provider: spec.provider,
       role: spec.role,
       title: spec.title,
       status: spec.status,
       providerSessionId: `demo_${spec.id}`,
-      cwd: spec.cwd,
+      cwd: lane?.path ?? spec.cwd,
       model: spec.model,
       executionMode: spec.executionMode,
       error: spec.error ?? null,
@@ -224,6 +274,7 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
 
   const taskSpecs: TaskSpec[] = [
     { id: 'task_demo_ely142', workspaceId: ely, key: 'ELY-142', title: 'Empilement des objets dans l’inventaire', objective: 'Les potions et les matériaux doivent s’empiler jusqu’à 99 par case.', status: 'review', repositoryId: elyUnity.id, provider: 'claude-code', role: 'developer', executionMode: 'manual', sessionId: 'ses_demo_ely142', progress: 90, createdMinAgo: 100 },
+    { id: 'task_demo_ely136', workspaceId: ely, key: 'ELY-136', title: 'Sauvegarde dans le cloud', objective: 'Synchroniser la sauvegarde locale à chaque point de contrôle ; la copie la plus récente gagne.', status: 'completed', repositoryId: elyUnity.id, provider: 'claude-code', role: 'developer', executionMode: 'manual', sessionId: 'ses_demo_ely136', progress: 100, createdMinAgo: 60 * 6 },
     { id: 'task_demo_ely151', workspaceId: ely, key: 'ELY-151', title: 'Désynchronisation du Gardien en coop', objective: 'Le boss change de phase à des moments différents selon les joueurs.', status: 'failed', repositoryId: elyBackend.id, provider: 'codex', role: 'backend', executionMode: 'auto', sessionId: 'ses_demo_ely151', progress: 40, createdMinAgo: 250, error: 'Les tests d’intégration du lobby échouent (timeout réseau simulé).' },
     { id: DEMO_LIVE_TASK_ID, workspaceId: ely, key: 'ELY-163', title: 'Accélérer le chargement des scènes', objective: 'Charger les scènes de donjon en asynchrone avec un écran de transition.', status: 'draft', repositoryId: elyUnity.id, provider: 'claude-code', role: 'developer', executionMode: 'manual', sessionId: null, progress: 0, createdMinAgo: 20 },
     { id: 'task_demo_ely170', workspaceId: ely, key: 'ELY-170', title: 'Localisation allemande', objective: 'Ajouter la langue allemande aux menus et aux dialogues.', status: 'draft', repositoryId: elyUnity.id, provider: 'codex', role: 'frontend', executionMode: 'auto', sessionId: null, progress: 0, createdMinAgo: 10 },
@@ -236,6 +287,7 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
     s === 'review' || s === 'completed' ? 'completed' : s === 'failed' ? 'failed' : 'pending';
   const tasks: Task[] = taskSpecs.map((t) => {
     const started = t.sessionId ? ago(t.createdMinAgo - 5) : null;
+    const lane = laneOf(t.id);
     return {
       id: t.id,
       workspaceId: t.workspaceId,
@@ -245,8 +297,8 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
       objective: t.objective,
       status: t.status,
       orchestration: 'single',
-      /* Demo repositories are not Git checkouts: no worktrees. */
-      isolation: 'none',
+      /* Demo repositories are not Git checkouts: the lanes are fictional too, with scripted diffs (`diffs.ts`). */
+      isolation: lane ? 'worktree' : 'none',
       executionMode: t.executionMode,
       repositoryIds: [t.repositoryId],
       subtasks: [
@@ -260,7 +312,7 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
           dependsOn: [],
           status: subtaskStatus(t.status),
           sessionId: t.sessionId,
-          worktreeId: null,
+          worktreeId: lane?.id ?? null,
           order: 0,
           error: t.error ?? null,
           attemptStartedAt: started,
@@ -301,5 +353,38 @@ export function buildDemoDataset(machineId: string, now = new Date()): DemoDatas
     approval('apr_demo_2', 'ses_demo_cc91', 'task_demo_cc91', cloud, 'claude-code', 'Bash', { command: 'rm -rf apps/api/.cache' }, 'Exécuter `rm -rf apps/api/.cache`', 'high', 'rejected', 43),
   ];
 
-  return { workspaces, tasks, sessions, entries, approvals };
+  /* Pull requests as GitHub last reported them; the demo runtime never reads them again (no `gh`, no network). */
+  const check = (name: string, status: CICheck['status']): CICheck => ({ name, status, url: null });
+  const pullRequest = (id: string, worktreeId: string, number: number, title: string, status: PullRequest['status'], checks: CICheck[], minAgo: number): PullRequest => {
+    const lane = worktrees.find((w) => w.id === worktreeId)!;
+    const repository = [elyUnity, elyBackend, cloudRepo].find((r) => r.id === lane.repositoryId)!;
+    const diff = demoWorktreeDiff(lane);
+    return {
+      id,
+      workspaceId: lane.workspaceId,
+      repositoryId: lane.repositoryId,
+      taskId: lane.taskId,
+      worktreeId,
+      ticketId: null,
+      number,
+      title,
+      branch: lane.branch,
+      baseBranch: lane.baseBranch,
+      url: `${repository.remoteUrl!.replace(/\.git$/, '')}/pull/${number}`,
+      status,
+      additions: diff?.additions ?? 0,
+      deletions: diff?.deletions ?? 0,
+      checks,
+      dependsOn: [],
+      createdAt: ago(minAgo),
+      updatedAt: ago(minAgo - 20),
+      syncedAt: ago(4),
+    };
+  };
+  const pullRequests: PullRequest[] = [
+    pullRequest('pr_demo_ely136', DEMO_WORKTREE_IDS.ely136, 87, 'ELY-136: Sauvegarde dans le cloud', 'open', [check('EditMode tests', 'success'), check('Build Android', 'failure'), check('Build iOS', 'running')], 60 * 5),
+    pullRequest('pr_demo_cc88', DEMO_WORKTREE_IDS.cc88, 212, 'CC-88: Export CSV des factures', 'approved', [check('lint', 'success'), check('test', 'success'), check('e2e', 'success')], 60 * 25),
+  ];
+
+  return { workspaces, tasks, sessions, entries, approvals, worktrees, pullRequests };
 }
