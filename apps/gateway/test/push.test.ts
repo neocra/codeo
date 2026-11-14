@@ -78,6 +78,19 @@ describe('push registration', () => {
     expect((await put(pixel.accessToken, { provider: 'fcm', token: FCM_TOKEN })).statusCode).toBe(200);
   });
 
+  it('rate-limits registrations per device and per address, before authentication', async () => {
+    ctx = await createTestApp();
+    const { runtimeSecret } = await registerRuntime(ctx);
+    const phone = await pairDevice(ctx, runtimeSecret);
+    const put = (headers: Record<string, string>) => ctx!.app.inject({ method: 'PUT', url: '/v1/devices/me/push', headers, payload: apnsBody });
+    for (let i = 0; i < 30; i++) expect((await put({ authorization: `Bearer ${phone.accessToken}` })).statusCode).toBe(200);
+    expect((await put({ authorization: `Bearer ${phone.accessToken}` })).statusCode).toBe(429);
+    /* Unauthenticated calls from one address stop before any token is checked. */
+    for (let i = 0; i < 89; i++) await put({});
+    expect((await put({})).statusCode).toBe(429);
+    expect((await ctx.app.inject({ method: 'DELETE', url: '/v1/devices/me/push' })).statusCode).toBe(429);
+  });
+
   it('forgets the token when the desktop revokes the phone', async () => {
     ctx = await createTestApp();
     const { runtimeSecret } = await registerRuntime(ctx);

@@ -91,7 +91,12 @@ const PROVIDER_FOR_PLATFORM = { ios: 'apns', android: 'fcm' } as const;
 
 export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
   const { store, auth, pairing, relay, push, audit, clock, log } = deps;
+  /* Per address before authentication (token checks are not free), then per device. */
+  const pushIpLimiter = createRateLimiter({ max: 120, windowMs: 60 * 60_000, clock });
   const pushLimiter = createRateLimiter({ max: 30, windowMs: 60 * 60_000, clock });
+  const limitPush = (key: string, limiter = pushLimiter) => {
+    if (!limiter.hit(key).allowed) throw new GatewayError(429, 'RATE_LIMITED', 'too many push registrations');
+  };
   const registerLimiter = createRateLimiter({ max: 20, windowMs: 60 * 60_000, clock });
 
   const requireRuntime = (req: FastifyRequest): Promise<RuntimeRecord> => auth.authenticateRuntime(req.headers.authorization);
@@ -154,8 +159,9 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
     /* The phone's own push registration. `delivery` says whether this gateway can actually send through the
      * provider: a gateway without APNs / FCM credentials keeps the token and reports it, it never pretends. */
     app.put('/v1/devices/me/push', async (req) => {
+      limitPush(req.ip, pushIpLimiter);
       const { device } = await auth.authenticateDevice(req.headers.authorization);
-      if (!pushLimiter.hit(device.deviceId).allowed) throw new GatewayError(429, 'RATE_LIMITED', 'too many push registrations');
+      limitPush(device.deviceId);
       const body = parseWith(PushTokenBody, req.body);
       if (PROVIDER_FOR_PLATFORM[device.platform] !== body.provider) {
         throw new GatewayError(400, 'INVALID_PARAMS', `a ${device.platform} device registers ${PROVIDER_FOR_PLATFORM[device.platform]} tokens`);
@@ -175,7 +181,9 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
     });
 
     app.delete('/v1/devices/me/push', async (req) => {
+      limitPush(req.ip, pushIpLimiter);
       const { device } = await auth.authenticateDevice(req.headers.authorization);
+      limitPush(device.deviceId);
       const removed = await store.pushTokens.delete(device.deviceId);
       await audit({ actor: `device:${device.deviceId}`, action: 'push.unregister', target: device.deviceId, ok: true, detail: `removed=${removed}` });
       return { removed };
