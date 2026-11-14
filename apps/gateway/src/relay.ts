@@ -95,6 +95,8 @@ export interface RelayOptions {
   clock: Clock;
   log: Logger;
   version: string;
+  /** Sees every event a runtime streams (push notifications). Must not throw or block. */
+  onRuntimeEvent?: ((runtimeId: string, event: RuntimeEvent) => void) | undefined;
 }
 
 export interface Relay {
@@ -156,6 +158,7 @@ export function createRelay(opts: RelayOptions): Relay {
           log.debug('dropped duplicate or out-of-order event', { runtimeId: state.runtimeId, seq: msg.seq });
           return;
         }
+        opts.onRuntimeEvent?.(state.runtimeId, msg.event);
         for (const dev of state.devices.values()) {
           if (msg.seq <= dev.lastSeq) continue;
           dev.lastSeq = msg.seq;

@@ -73,6 +73,23 @@ export const MIGRATIONS: readonly { version: number; name: string; sql: string }
       CREATE INDEX gateway_audit_action_idx ON gateway_audit (action, seq);
     `,
   },
+  {
+    version: 2,
+    name: 'push_tokens',
+    sql: `
+      CREATE TABLE gateway_push_tokens (
+        device_id text PRIMARY KEY REFERENCES gateway_devices (device_id) ON DELETE CASCADE,
+        runtime_id text NOT NULL,
+        provider text NOT NULL CHECK (provider IN ('apns', 'fcm')),
+        token text NOT NULL,
+        environment text NOT NULL CHECK (environment IN ('sandbox', 'production')),
+        locale text NOT NULL,
+        updated_at timestamptz NOT NULL
+      );
+      CREATE UNIQUE INDEX gateway_push_tokens_token_idx ON gateway_push_tokens (provider, token);
+      CREATE INDEX gateway_push_tokens_runtime_idx ON gateway_push_tokens (runtime_id);
+    `,
+  },
 ];
 
 /** Arbitrary constant: serializes migrations when several gateway processes boot at once. */

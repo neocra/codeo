@@ -5,7 +5,8 @@ import { createLogger } from '@codeo/shared-utils';
 import { buildApp, type GatewayApp } from '../src/app';
 import type { GatewayConfig } from '../src/config';
 import { openPostgresStore } from '../src/postgres';
-import { createMemoryStore, type GatewayStore } from '../src/store';
+import type { PushSender } from '../src/push';
+import { createMemoryStore, type GatewayStore, type PushProvider } from '../src/store';
 import { createPgliteDatabase } from './pglite';
 
 /** `GATEWAY_TEST_STORE=postgres` runs every gateway test on the PostgreSQL store (PGlite). */
@@ -35,6 +36,7 @@ export function testConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     logLevel: 'error',
     database: null,
     auditRetentionDays: 90,
+    push: { apns: null, fcm: null },
     ...overrides,
   };
 }
@@ -60,6 +62,7 @@ export interface TestAppOptions {
   /** Defaults to a fresh store of TEST_STORE_KIND, closed with the app. */
   store?: GatewayStore;
   clock?: ReturnType<typeof fakeClock>;
+  pushSenders?: Partial<Record<PushProvider, PushSender>>;
 }
 
 export async function createTestApp(overrides: Partial<GatewayConfig> = {}, opts: TestAppOptions = {}): Promise<TestContext> {
@@ -67,7 +70,7 @@ export async function createTestApp(overrides: Partial<GatewayConfig> = {}, opts
   const owned = opts.store === undefined;
   const store = opts.store ?? (await createTestStore());
   const clock = opts.clock ?? fakeClock();
-  const built = await buildApp(config, store, { logger: silentLogger(), clock: clock.now, maintenanceIntervalMs: 0 });
+  const built = await buildApp(config, store, { logger: silentLogger(), clock: clock.now, maintenanceIntervalMs: 0, pushSenders: opts.pushSenders ?? {} });
   if (owned) built.app.addHook('onClose', async () => store.close());
   return { ...built, store, config, clock };
 }
@@ -87,14 +90,14 @@ export interface PairedDevice {
   scopes: string[];
 }
 
-export async function pairDevice(ctx: TestContext, runtimeSecret: string, name = 'iPhone'): Promise<PairedDevice> {
+export async function pairDevice(ctx: TestContext, runtimeSecret: string, name = 'iPhone', platform: 'ios' | 'android' = 'ios'): Promise<PairedDevice> {
   const start = await ctx.app.inject({ method: 'POST', url: '/v1/pairing/start', headers: { authorization: `Bearer ${runtimeSecret}` } });
   if (start.statusCode !== 201) throw new Error(`pairing start failed: ${start.body}`);
   const { code } = start.json<{ code: string }>();
   const complete = await ctx.app.inject({
     method: 'POST',
     url: '/v1/pairing/complete',
-    payload: { code, device: { name, platform: 'ios' } },
+    payload: { code, device: { name, platform } },
   });
   if (complete.statusCode !== 201) throw new Error(`pairing complete failed: ${complete.body}`);
   return complete.json<PairedDevice>();

@@ -149,6 +149,38 @@ describe(`gateway store contract (${TEST_STORE_KIND})`, () => {
     expect(await store.refreshTokens.findByHash('hash-rft_4')).not.toBeNull();
   });
 
+  it('push tokens: upsert per device, a token moves to the newest device, revoked devices are not listed', async () => {
+    await store.devices.create(device('dev_1'));
+    await store.devices.create(device('dev_2'));
+    const push = (deviceId: string, token: string) => ({
+      deviceId,
+      runtimeId: 'rt_1',
+      provider: 'apns' as const,
+      token,
+      environment: 'sandbox' as const,
+      locale: 'en' as const,
+      updatedAt: iso(T0),
+    });
+    await store.pushTokens.upsert(push('dev_1', 'a'.repeat(64)));
+    expect(await store.pushTokens.get('dev_1')).toEqual(push('dev_1', 'a'.repeat(64)));
+    await store.pushTokens.upsert({ ...push('dev_1', 'b'.repeat(64)), locale: 'fr' });
+    expect((await store.pushTokens.get('dev_1'))?.token).toBe('b'.repeat(64));
+    expect((await store.pushTokens.get('dev_1'))?.locale).toBe('fr');
+
+    /* The phone paired again: its token now belongs to the new device only. */
+    await store.pushTokens.upsert(push('dev_2', 'b'.repeat(64)));
+    expect(await store.pushTokens.get('dev_1')).toBeNull();
+    expect((await store.pushTokens.listByRuntime('rt_1')).map((p) => p.deviceId)).toEqual(['dev_2']);
+
+    await store.pushTokens.upsert(push('dev_1', 'c'.repeat(64)));
+    await store.devices.update('dev_2', { revoked: true, revokedAt: iso(T0) });
+    expect((await store.pushTokens.listByRuntime('rt_1')).map((p) => p.deviceId)).toEqual(['dev_1']);
+    expect(await store.pushTokens.listByRuntime('rt_other')).toEqual([]);
+
+    expect(await store.pushTokens.delete('dev_1')).toBe(true);
+    expect(await store.pushTokens.delete('dev_1')).toBe(false);
+  });
+
   it('audit: oldest first, limit keeps the latest, filters, prune by age', async () => {
     for (let i = 0; i < 5; i++) {
       await store.audit.append({ id: `aud_${i}`, at: iso(T0 + i * 1000), actor: i % 2 ? 'device:d' : 'runtime:r', action: i < 3 ? 'a' : 'b', target: null, ok: true, detail: i === 0 ? null : `n=${i}` });

@@ -5,6 +5,9 @@ import type {
   DeviceRecord,
   GatewayStore,
   PairingCodeRecord,
+  PushLocale,
+  PushProvider,
+  PushTokenRecord,
   RefreshTokenRecord,
   RuntimeRecord,
 } from '../store';
@@ -67,6 +70,16 @@ interface RefreshRow {
   rotated_at: Ts;
 }
 
+interface PushRow {
+  device_id: string;
+  runtime_id: string;
+  provider: PushProvider;
+  token: string;
+  environment: 'sandbox' | 'production';
+  locale: PushLocale;
+  updated_at: Ts;
+}
+
 interface AuditRow {
   id: string;
   at: Ts;
@@ -121,6 +134,16 @@ const refreshFromRow = (r: RefreshRow): RefreshTokenRecord => ({
   createdAt: reqIso(r.created_at),
   expiresAt: reqIso(r.expires_at),
   rotatedAt: toIso(r.rotated_at),
+});
+
+const pushFromRow = (r: PushRow): PushTokenRecord => ({
+  deviceId: r.device_id,
+  runtimeId: r.runtime_id,
+  provider: r.provider,
+  token: r.token,
+  environment: r.environment,
+  locale: r.locale,
+  updatedAt: reqIso(r.updated_at),
 });
 
 const auditFromRow = (r: AuditRow): AuditEntry => ({
@@ -248,6 +271,39 @@ export function createPostgresStore(db: SqlDatabase): GatewayStore {
       },
       async prune(now) {
         await db.query('DELETE FROM gateway_refresh_tokens WHERE expires_at <= $1', [at(now)]);
+      },
+    },
+    pushTokens: {
+      async upsert(p) {
+        /* One statement pair in a transaction: the unique (provider, token) index never sees two holders. */
+        await db.transaction(async (tx) => {
+          await tx.query('DELETE FROM gateway_push_tokens WHERE provider = $1 AND token = $2 AND device_id <> $3', [p.provider, p.token, p.deviceId]);
+          await tx.query(
+            `INSERT INTO gateway_push_tokens (device_id, runtime_id, provider, token, environment, locale, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (device_id) DO UPDATE SET
+               runtime_id = EXCLUDED.runtime_id, provider = EXCLUDED.provider, token = EXCLUDED.token,
+               environment = EXCLUDED.environment, locale = EXCLUDED.locale, updated_at = EXCLUDED.updated_at`,
+            [p.deviceId, p.runtimeId, p.provider, p.token, p.environment, p.locale, p.updatedAt],
+          );
+        });
+      },
+      async get(deviceId) {
+        const res = await db.query<PushRow>('SELECT * FROM gateway_push_tokens WHERE device_id = $1', [deviceId]);
+        const row = res.rows[0];
+        return row ? pushFromRow(row) : null;
+      },
+      async listByRuntime(runtimeId) {
+        const res = await db.query<PushRow>(
+          `SELECT p.* FROM gateway_push_tokens p JOIN gateway_devices d ON d.device_id = p.device_id
+           WHERE p.runtime_id = $1 AND d.revoked = false ORDER BY p.device_id`,
+          [runtimeId],
+        );
+        return res.rows.map(pushFromRow);
+      },
+      async delete(deviceId) {
+        const res = await db.query('DELETE FROM gateway_push_tokens WHERE device_id = $1', [deviceId]);
+        return res.rowCount > 0;
       },
     },
     audit: {

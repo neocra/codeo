@@ -59,6 +59,26 @@ export interface RefreshTokenRecord {
   rotatedAt: string | null;
 }
 
+export type PushProvider = 'apns' | 'fcm';
+export type PushLocale = 'fr' | 'en';
+
+/**
+ * Where to reach one paired phone with a push notification. One per device; the token is the APNs device
+ * token (iOS) or the FCM registration token (Android). Payloads sent to it carry ids only (§5 of
+ * docs/security/remote-access.md), so the token is not a secret, but it is never returned to a runtime.
+ */
+export interface PushTokenRecord {
+  deviceId: string;
+  runtimeId: string;
+  provider: PushProvider;
+  token: string;
+  /** APNs only: tokens of development builds are only valid on the sandbox host. */
+  environment: 'sandbox' | 'production';
+  /** Language of the (generic) notification text. */
+  locale: PushLocale;
+  updatedAt: string;
+}
+
 export interface AuditEntry {
   id: string;
   at: string;
@@ -110,6 +130,19 @@ export interface RefreshTokenStore {
   prune(now: number): Promise<void>;
 }
 
+export interface PushTokenStore {
+  /**
+   * Sets the device's token. The same provider token held by another device (the phone paired again) is
+   * removed in the same step, so a phone never receives one notification per old pairing.
+   */
+  upsert(record: PushTokenRecord): Promise<void>;
+  get(deviceId: string): Promise<PushTokenRecord | null>;
+  /** Tokens of the runtime's devices that are not revoked. */
+  listByRuntime(runtimeId: string): Promise<PushTokenRecord[]>;
+  /** True when a token was removed. */
+  delete(deviceId: string): Promise<boolean>;
+}
+
 export interface AuditStore {
   append(entry: AuditEntry): Promise<void>;
   /** Oldest first, the `limit` most recent matching entries (default 100). */
@@ -123,6 +156,7 @@ export interface GatewayStore {
   devices: DeviceStore;
   pairingCodes: PairingCodeStore;
   refreshTokens: RefreshTokenStore;
+  pushTokens: PushTokenStore;
   audit: AuditStore;
   /** Releases connections (no-op in memory). */
   close(): Promise<void>;
@@ -140,6 +174,7 @@ export function createMemoryStore(): GatewayStore {
   const devices = new Map<string, DeviceRecord>();
   const pairingCodes = new Map<string, PairingCodeRecord>();
   const refreshTokens = new Map<string, RefreshTokenRecord>();
+  const pushTokens = new Map<string, PushTokenRecord>();
   const auditLog: AuditEntry[] = [];
   const AUDIT_MAX = 10_000;
 
@@ -230,6 +265,26 @@ export function createMemoryStore(): GatewayStore {
       },
       async prune(now) {
         for (const [id, rec] of refreshTokens) if (Date.parse(rec.expiresAt) <= now) refreshTokens.delete(id);
+      },
+    },
+    pushTokens: {
+      async upsert(record) {
+        for (const [deviceId, rec] of pushTokens) {
+          if (deviceId !== record.deviceId && rec.provider === record.provider && rec.token === record.token) pushTokens.delete(deviceId);
+        }
+        pushTokens.set(record.deviceId, { ...record });
+      },
+      async get(deviceId) {
+        const rec = pushTokens.get(deviceId);
+        return rec ? { ...rec } : null;
+      },
+      async listByRuntime(runtimeId) {
+        return [...pushTokens.values()]
+          .filter((rec) => rec.runtimeId === runtimeId && devices.get(rec.deviceId)?.revoked === false)
+          .map((rec) => ({ ...rec }));
+      },
+      async delete(deviceId) {
+        return pushTokens.delete(deviceId);
       },
     },
     audit: {

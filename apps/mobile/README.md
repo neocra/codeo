@@ -84,8 +84,14 @@ Real, backed by runtime commands:
 - **Plus** — remote access (pairing state, gateway, device, pair again, forget), runtime URL + token
   (secure store), connection state, `runtime.info`, a local first name for the greeting, language fr / en.
 - **Jumelage** (`app/pair.tsx`) — `expo-camera` QR scanner, manual code entry.
+- **Notifications** (`lib/push.ts`, `components/PushRegistration.tsx`) — once paired and connected, the app
+  asks the notification permission once, sends its native token (APNs on iOS, FCM on Android) to the gateway
+  (`PUT /v1/devices/me/push`) and shows in Plus whether the gateway can deliver. A pending approval arrives as a
+  content-free notification (ids only); tapping it opens Approbations. In front, no banner (the relay already
+  updated the screen). Forgetting the pairing unregisters the token. Needs a development build: Expo Go has no
+  push entitlement for this app, and the card says so.
 
-Not yet: push notifications, Face ID before approving, the review / diff screen, creating tasks from the phone.
+Not yet: the review / diff screen, creating tasks from the phone.
 
 ## Layout
 

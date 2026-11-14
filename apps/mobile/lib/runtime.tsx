@@ -89,7 +89,7 @@ let sharedSession: GatewaySession | null = null;
  * again revokes the phone, so two sessions refreshing with the same token (an effect run twice, a remount)
  * must never exist: the session's single-flight refresh only protects callers that share it.
  */
-function gatewaySession(): GatewaySession {
+export function gatewaySession(): GatewaySession {
   const credentials = useSettings.getState().gateway;
   if (!credentials) throw new Error('not paired');
   const current = sharedSession?.credentials;
