@@ -187,6 +187,14 @@ export function createRoutes(deps: RouteDeps): FastifyPluginAsync {
       return { removed };
     });
 
+    /* The phone forgetting its own pairing: same revocation as the desktop's (refresh tokens dropped, push token
+     * removed, relay socket closed), so a forgotten phone is not left listed as active on the computer. */
+    app.post('/v1/devices/me/revoke', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
+      const { device } = await auth.authenticateDevice(req.headers.authorization);
+      const updated = (await auth.revokeDevice(device.deviceId, `device:${device.deviceId}`, 'pairing forgotten on the device')) ?? device;
+      return { deviceId: updated.deviceId, revoked: updated.revoked, revokedAt: updated.revokedAt };
+    });
+
     app.post('/v1/devices/:id/revoke', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
       const runtime = await requireRuntime(req);
       const { id } = parseWith(DeviceIdParams, req.params);

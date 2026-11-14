@@ -7,9 +7,10 @@ import { translate, type Locale } from '@codeo/i18n';
 import {
   ApprovalPushDataSchema,
   registerPushToken,
-  unregisterPushToken,
+  staleApprovalNotifications,
   type ApprovalPushData,
   type GatewaySession,
+  type PendingApprovals,
   type PushRegistration,
 } from '@codeo/remote-client';
 
@@ -100,23 +101,46 @@ export async function syncPush({ session, locale, prompt }: SyncPushOptions): Pr
   }
 }
 
-/** Best effort, before the pairing is forgotten: the desktop revoking the phone removes it too. */
-export async function stopPush(session: GatewaySession): Promise<void> {
+/**
+ * Local side of forgetting the pairing: the gateway drops the token when it revokes the device, so only the
+ * app's state and the notifications already delivered for that pairing remain to clear.
+ */
+export async function resetPush(): Promise<void> {
   usePush.setState({ status: 'idle', error: null, registered: null });
   if (!pushSupported) return;
   try {
-    await unregisterPushToken(session, { timeoutMs: 5_000 });
+    await Notifications.dismissAllNotificationsAsync();
   } catch {
-    /* offline or already revoked: the gateway forgets the token when the device is revoked */
+    /* nothing delivered, or the system refused: harmless */
   }
 }
 
 /**
- * The approval a tapped notification points at, or null for anything else. iOS keeps the gateway's
- * custom `codeo` key in the raw APNs payload, Android puts the FCM data in `content.data`.
+ * Withdraws the delivered notifications of approvals that are no longer pending (decided on this phone, on
+ * the computer, or expired). Runs whenever the app sees the pending list, since the gateway's pushes are
+ * content-free alerts that cannot be retracted remotely. Never throws.
  */
-export function approvalFromNotification(response: Notifications.NotificationResponse): ApprovalPushData | null {
-  const { request } = response.notification;
+export async function dismissResolvedApprovals(pending: PendingApprovals): Promise<void> {
+  if (!pushSupported) return;
+  try {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    /* iOS serializes `date` in seconds (EXNotificationSerializer), Android in milliseconds. */
+    const toMs = (date: number) => (date < 1e12 ? date * 1000 : date);
+    const delivered = presented.map((n) => ({ id: n.request.identifier, data: approvalFromNotification(n), deliveredAt: toMs(n.date) }));
+    for (const id of staleApprovalNotifications(delivered, pending)) {
+      await Notifications.dismissNotificationAsync(id);
+    }
+  } catch {
+    /* the next pending list tries again */
+  }
+}
+
+/**
+ * The approval a notification points at, or null for anything else. iOS keeps the gateway's custom `codeo`
+ * key in the raw APNs payload, Android puts the FCM data in `content.data`.
+ */
+export function approvalFromNotification(notification: Notifications.Notification): ApprovalPushData | null {
+  const { request } = notification;
   const trigger = request.trigger as { payload?: Record<string, unknown>; remoteMessage?: { data?: Record<string, unknown> } } | null;
   const content = request.content.data as Record<string, unknown> | null;
   const candidates: unknown[] = [content, content?.codeo, trigger?.payload?.codeo, trigger?.remoteMessage?.data];

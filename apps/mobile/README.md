@@ -88,7 +88,9 @@ Real, backed by runtime commands:
   asks the notification permission once, sends its native token (APNs on iOS, FCM on Android) to the gateway
   (`PUT /v1/devices/me/push`) and shows in Plus whether the gateway can deliver. A pending approval arrives as a
   content-free notification (ids only); tapping it opens Approbations. In front, no banner (the relay already
-  updated the screen). Forgetting the pairing unregisters the token. Needs a development build: Expo Go has no
+  updated the screen). Once an approval is decided or expired, the app withdraws its notification the next time
+  it reads the pending list. Forgetting the pairing revokes the phone on the gateway (`POST /v1/devices/me/revoke`,
+  which also drops the token) and clears its notifications. Needs a development build: Expo Go has no
   push entitlement for this app, and the card says so.
 
 Not yet: the review / diff screen, creating tasks from the phone.

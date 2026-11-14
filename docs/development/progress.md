@@ -4,6 +4,17 @@ _Updated: 2026-11-14_
 
 ## Current milestone: Phase 6 — remote access (in progress)
 
+### Phase 6, step 6: closing the remote-access gaps (done; verified by tests, not in the simulator)
+- Forgetting the pairing on the phone now revokes it on the gateway first: `POST /v1/devices/me/revoke` (device
+  access token) goes through the same `revokeDevice` as the desktop's revocation (refresh tokens dropped, push token
+  removed, relay socket closed with 4003, audited as `device:<id>`), so the computer lists the phone as revoked.
+  `revokeThisDevice` in `@codeo/remote-client` treats an already revoked phone as revoked; when the gateway cannot be
+  reached the pairing is still erased from the phone and Plus says to revoke it from the computer.
+- A decided (or expired) approval withdraws its notification: whenever the app reads the pending list (every
+  `ApprovalRequested` / `ApprovalResolved` event, reconnection, return to the front) it dismisses the delivered
+  notifications of the paired runtime whose approval is no longer pending — only those delivered before the list was
+  read (`staleApprovalNotifications`), so a push racing the list is kept. Forgetting the pairing clears them all.
+
 ### Phase 6, step 5: push notifications for approvals (done; real APNs / FCM delivery not exercised)
 - Gateway (`apps/gateway/src/push/`): the relay hands every runtime event to a dispatcher, which sends one push per
   pending, unexpired `ApprovalRequested` (deduplicated by approval id) to the runtime's non-revoked phones holding
@@ -25,7 +36,7 @@ _Updated: 2026-11-14_
 - Mobile: `expo-notifications` + `expo-application`; permission asked once on the first connection after pairing,
   token re-sent on rotation or language change, foreground banners suppressed, a tapped notification for the paired
   runtime opens Approbations, Plus shows a Notifications card (enabled / gateway not configured / denied → open
-  settings / off → turn on / unavailable in Expo Go), forgetting the pairing unregisters first.
+  settings / off → turn on / unavailable in Expo Go), forgetting the pairing unregisters first (since step 6: revokes the phone).
 
 ### Demo data for review diffs and pull requests (done and verified)
 - The demo dataset (`apps/runtime/src/demo`) now has four reviewed tasks that ran in a worktree: ELY-142 and CC-91 in
@@ -220,8 +231,8 @@ _Updated: 2026-11-14_
 - Remote access: mobile pairing was run in the iOS simulator with a code typed by hand; the camera scan of the desktop's
   QR code and a physical phone (keychain, network changes) are not verified yet. With `DATABASE_URL` unset (development) the gateway keeps
   registrations in memory, so a restart means turning remote access on again; with PostgreSQL they survive. One gateway
-  instance per runtime: rate limiters and the relay are per process. No certificate pinning; push notifications need APNs / FCM credentials on the gateway and a development build of the app (Expo Go cannot receive them), and a decided approval does not withdraw its notification; the runtime proves its identity at
-  connection time but frames are not signed end to end, and Face ID is enforced by the app only. "Forget this pairing" on the phone does not revoke it on the gateway (revoke from the desktop).
+  instance per runtime: rate limiters and the relay are per process. No certificate pinning; push notifications need APNs / FCM credentials on the gateway and a development build of the app (Expo Go cannot receive them), and a decided approval withdraws its notification only once the app runs (the content-free pushes cannot be retracted remotely); the runtime proves its identity at
+  connection time but frames are not signed end to end, and Face ID is enforced by the app only. "Forget this pairing" revokes the phone on the gateway when it is reachable (otherwise revoke from the desktop).
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.

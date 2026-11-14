@@ -50,7 +50,7 @@ still holds unexpired tokens.
 | **Short-lived credentials** | Access tokens are HMAC-SHA256 signed (`v1.<claims>.<sig>`, `node:crypto`, constant-time compare, no external JWT lib and therefore no algorithm negotiation) and expire after 15 minutes by default. Claims: device, runtime, scopes, iat/exp, jti. | `tokens.ts` |
 | **Token rotation** | Refresh tokens are opaque 256-bit random strings; only their sha256 is stored. `POST /v1/auth/refresh` retires the presented token (kept until expiry, flagged `rotatedAt`) and issues a new pair in the same *family*. | `auth.ts` (`refresh`) |
 | **Replay protection** | Presenting a refresh token that was already rotated is treated as theft: the **whole device is revoked**, every refresh token of the device is deleted, an `auth.refresh.reuse` audit entry is written, and the still-valid access token is refused at the edge. Request ids on the relay are prefixed per connection so a response can only go back to the socket that asked. Events carry the runtime's monotonic `seq`; the relay drops duplicates and never delivers a seq twice to the same device. | `auth.ts`, `relay.ts` |
-| **Device revocation** | `POST /v1/devices/:id/revoke` (runtime-authenticated, scoped to its own devices — foreign devices are "not found"). Revocation marks the record, drops refresh tokens, closes every live socket of the device (close code 4003) and is re-checked **on every relayed request**, so an unexpired access token stops working immediately. | `auth.ts` (`revokeDevice`), `relay.ts` |
+| **Device revocation** | `POST /v1/devices/:id/revoke` (runtime-authenticated, scoped to its own devices — foreign devices are "not found"), or `POST /v1/devices/me/revoke` with the device's own access token when the phone forgets its pairing. Revocation marks the record, drops refresh tokens, closes every live socket of the device (close code 4003) and is re-checked **on every relayed request**, so an unexpired access token stops working immediately. | `auth.ts` (`revokeDevice`), `relay.ts` |
 | **Runtime identity verification** | Runtimes register once (`POST /v1/runtimes/register`) and receive a self-describing secret `<runtimeId>.<random>`; only its sha256 is stored, the secret is shown once. Every runtime action (pairing start, device listing, revocation, relay connect) requires it as `Authorization: Bearer`, and the relay rejects a runtime that presents a valid secret for a different `:id` (403). Devices are bound to one `runtimeId` in both the record and the token; a token for runtime A cannot be used on runtime B. The phone verifies the *gateway* through TLS; the phone also verifies the *runtime* on every connection — see "Runtime identity" below. | `routes.ts`, `auth.ts`, `relay.ts` |
 | **Connection recovery** | Both sides are heartbeat-pinged every 30 s and terminated when silent. Devices reconnect with `afterSeq`; the relay replays from its per-runtime ring (last 2 000 events). If the requested window was evicted, or the gateway restarted with an empty ring, the device gets an `error` frame starting with `replay-gap` and must re-query state (the `RuntimeClient` surfaces it as an `error` event). A reconnecting runtime receives a `hello` with the gateway's own `afterSeq` so it can backfill the ring. A newer runtime connection replaces the older one (close 4000). | `relay.ts`, `ring-buffer.ts` |
 | **WebSocket streaming** | Standard runtime protocol (`@codeo/contracts`): device frames are validated as `ClientMessage`, runtime frames as `ServerMessage`; anything else is dropped. Max frame 4 MiB. Pings are answered by the gateway; a `hello` must arrive within 5 s. | `relay.ts` |
@@ -128,9 +128,11 @@ runtime still only checks the `approval:decide` scope.
   paths or session. APNs uses token auth (ES256 `.p8`, HTTP/2, `apns-expiration` = the approval's expiry,
   collapse id = approval id), FCM the HTTP v1 API with a service-account OAuth token. Tokens the provider declares
   dead (410 / `BadDeviceToken` / `UNREGISTERED`) are deleted. Every send is audited (`push.send`). A provider
-  without credentials is reported to the phone as `delivery: unconfigured`, never faked. Not yet: a resolved
-  approval does not withdraw its notification (tapping it opens the inbox, which shows it decided), and real
-  delivery through Apple's and Google's servers has not been exercised (no credentials in development).
+  without credentials is reported to the phone as `delivery: unconfigured`, never faked. A resolved
+  approval's notification is withdrawn by the app itself when it next reads the pending list (event, reconnection,
+  return to the front): until the app runs, it stays on the lock screen, and tapping it opens the inbox, which shows
+  it decided. Not yet: real delivery through Apple's and Google's servers has not been exercised (no credentials in
+  development).
 - **TLS termination guidance and pinning.** Production deployments should terminate TLS at a reverse
   proxy with HSTS and forward `X-Forwarded-For` (`TRUST_PROXY=true`); in-process TLS is for single-host
   setups. Certificate pinning in the mobile app and in the runtime relay client is not implemented.
@@ -139,7 +141,9 @@ runtime still only checks the `approval:decide` scope.
   connects to `/v1/devices/connect` with the access token in `Authorization: Bearer`, and refreshes it through one
   single-flight `GatewaySession` per device so a rotated token is never presented twice by the phone itself
   (`packages/remote-client/src/gateway.ts`). A refused refresh is terminal (`unauthorized`), never a retry loop.
-  Plain HTTP is refused except towards this machine. Forgetting the pairing on the phone does not revoke it server-side.
+  Plain HTTP is refused except towards this machine. Forgetting the pairing on the phone revokes it server-side first
+  (`POST /v1/devices/me/revoke`); if the gateway is unreachable the phone still forgets it and tells the user to revoke
+  it from the computer.
 - **End-to-end channel.** The runtime proves its identity at connection time (§4b) but frames are not
   signed or encrypted end to end, and the device `publicKey` accepted at pairing is still unused: devices do not
   sign their requests, so the runtime cannot tell a phone's decision from one forged by the gateway.
