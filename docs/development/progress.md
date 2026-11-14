@@ -1,8 +1,21 @@
 # Progress
 
-_Updated: 2026-11-13_
+_Updated: 2026-11-14_
 
 ## Current milestone: Phase 6 — remote access (in progress)
+
+### Demo data for review diffs and pull requests (done and verified)
+- The demo dataset (`apps/runtime/src/demo`) now has four reviewed tasks that ran in a worktree: ELY-142 and CC-91 in
+  review, ELY-136 and CC-88 completed. Their lanes are fictional `demo://.codeo/worktrees/…` folders on a real
+  `codeo/…` branch name, the agent's session works in its lane, and `worktrees.diff` serves their scripted changes
+  (`diffs.ts`: C# inventory stacking and cloud saves, TypeScript rate limiting and CSV export) — git is never called.
+- Two pull requests: #87 (ELY-136) open with one failed, one running and one passed check, #212 (CC-88) approved.
+  The demo runtime never polls GitHub for them (`pullRequests.refresh` is refused in demo, no background watch, so no
+  merged-lane cleanup either); opening a PR stays refused.
+- Requesting changes on a demo lane works: the scripted agent takes the feedback as its next turn in the lane, goes
+  through a real approval and the task returns to review (the worktree check for demo lanes is the row, not git).
+- Seed version 2: a demo database written by the first version gets the lanes, their tasks and sessions and the
+  pull requests at the next boot; the other tasks keep what was done in the demo.
 
 ### Phase 6, step 4: persistent gateway store (done and verified)
 - PostgreSQL implementation of `GatewayStore` (`apps/gateway/src/postgres/`: `db.ts` pool + transactions on `pg`,
@@ -191,14 +204,14 @@ _Updated: 2026-11-13_
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
 - Review comments are not persisted as drafts (they live in the screen until sent) and are not posted to GitHub PRs; after completion, iterate with a new task.
-- Demo mode: tickets, review diffs and PRs have no demo data yet. Demo repositories are not Git checkouts, so demo tasks run without worktree isolation (parallel / best-of-N are refused there). The demo dataset is written once; delete `~/.codeo/demo` to reset it.
+- Demo mode: tickets have no demo data yet. Demo repositories are not Git checkouts, so tasks created in demo mode run without worktree isolation (parallel / best-of-N are refused there); only the seeded lanes have diffs, and a change request on them does not change the scripted diff. Demo pull requests are a fixed snapshot (refresh is refused). The demo dataset is written once (and upgraded once per dataset version); delete `~/.codeo/demo` to reset it.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox (`workspace-write`).
 - Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
 ### Next priorities
 1. Scan the desktop's QR code from a physical phone (QR pairing pins the runtime key; Face ID match on a real device).
-2. Demo data for review diffs and pull requests (the demo dataset has tasks, sessions and approvals only).
+2. Push notifications for approvals (APNs/FCM, content-free payloads) — `docs/security/remote-access.md` §5.
 
 ## Verification log — 2026-11-13 (phase 6, persistent gateway store)
 

@@ -10,6 +10,7 @@ import { inspectRepository } from '@codeo/git';
 import { createLogger, KeyedLock, newId, type Logger } from '@codeo/shared-utils';
 import { DEMO_LIVE_TASK_ID, DEMO_PATH_PREFIX } from './demo/dataset';
 import { demoProviders } from './demo/provider';
+import { demoWorktreeDiff } from './demo/diffs';
 import { assertDataMode, seedDemoData } from './demo/seed';
 import { EventBus } from './event-bus';
 import { ApprovalService } from './services/approvals';
@@ -114,17 +115,20 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   if (demo) sessions.cwdAvailable = (cwd) => cwd.startsWith(DEMO_PATH_PREFIX);
   const worktreesDir = opts.worktreesDir ?? (opts.dataDir === ':memory:' ? path.join(os.tmpdir(), 'codeo-worktrees') : path.join(opts.dataDir, 'worktrees'));
   const workspaceLocks = new KeyedLock();
-  const worktrees = new WorktreeService(new WorktreeRepo(db.db), workspaces, bus, log.child('worktrees'), worktreesDir, workspaceLocks);
-  sessions.worktreeValidator = (worktreeId) => worktrees.assertIntact(worktreeId);
+  const worktreeRepo = new WorktreeRepo(db.db);
+  const pullRequestRepo = new PullRequestRepo(db.db);
+  const worktrees = new WorktreeService(worktreeRepo, workspaces, bus, log.child('worktrees'), worktreesDir, workspaceLocks);
+  /* Demo lanes are fictional folders git has never seen: their row is all there is to check. */
+  sessions.worktreeValidator = demo ? (worktreeId) => worktrees.get(worktreeId) : (worktreeId) => worktrees.assertIntact(worktreeId);
   const tasks = new TaskService(taskRepo, workspaces, sessions, worktrees, bus, log.child('tasks'));
-  const pullRequests = new PullRequestService(new PullRequestRepo(db.db), tasks, worktrees, workspaces, opts.github ?? new GhCliClient(), bus, log.child('pull-requests'), worktreeLocks);
+  const pullRequests = new PullRequestService(pullRequestRepo, tasks, worktrees, workspaces, opts.github ?? new GhCliClient(), bus, log.child('pull-requests'), worktreeLocks);
   const remote = new RemoteService(settings, bus, log.child('remote'), { name: machine.name, platform: machine.platform }, opts.remote);
   await approvals.init();
   await sessions.init();
   await tasks.init();
   /* Only once the tasks have recorded the idle sessions' completed turns do those sessions become disconnected. */
   await sessions.disconnectIdle();
-  const demoSeeded = demo && (await seedDemoData({ settings, workspaces: workspaceRepo, tasks: taskRepo, sessions: sessionRepo, approvals: approvalRepo }, machineId));
+  const demoSeeded = demo && (await seedDemoData({ settings, workspaces: workspaceRepo, tasks: taskRepo, sessions: sessionRepo, approvals: approvalRepo, worktrees: worktreeRepo, pullRequests: pullRequestRepo }, machineId));
 
   const info: RuntimeInfo = {
     version: RUNTIME_VERSION,
@@ -196,10 +200,16 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     return p;
   };
   /* Demo data must not reach real services either: no push to a real remote, no registration on a real gateway. */
-  const liveOnly = (key: 'demo.pullRequests' | 'demo.remoteAccess', text: string) => {
+  const liveOnly = (key: 'demo.pullRequests' | 'demo.pullRequestSync' | 'demo.remoteAccess', text: string) => {
     if (demo) throw localizedError('FORBIDDEN', key, undefined, text);
   };
   const noDemoPullRequests = () => liveOnly('demo.pullRequests', 'Mode démo : les pull requests s’ouvrent en mode réel.');
+  /* Demo worktrees are not checkouts: their changes are the scripted ones of the dataset, never read from git. */
+  const demoDiff = async (worktreeId: string) => {
+    const diff = demoWorktreeDiff(await worktrees.get(worktreeId));
+    if (!diff) throw localizedError('NOT_FOUND', 'demo.noDiff', undefined, 'Mode démo : ce worktree n’a pas de changements simulés.');
+    return diff;
+  };
   const noDemoRemote = () => liveOnly('demo.remoteAccess', 'Mode démo : l’accès distant se configure en mode réel.');
 
   const handlers: Handlers = {
@@ -231,12 +241,12 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'tasks.pause': async (p) => tasks.pause(p.taskId),
     'tasks.resume': async (p) => tasks.resume(p.taskId),
     'worktrees.list': async (p) => worktrees.list(p),
-    'worktrees.diff': async (p) => worktrees.diff(p.worktreeId),
+    'worktrees.diff': async (p) => (demo ? demoDiff(p.worktreeId) : worktrees.diff(p.worktreeId)),
     'worktrees.remove': async (p) => ({ removed: await removeWorktreeGuarded(p.worktreeId, p.force) }),
     'github.status': async () => pullRequests.status(),
     'pullRequests.list': async (p) => pullRequests.list(p),
     'pullRequests.create': async (p) => (noDemoPullRequests(), pullRequests.create(p)),
-    'pullRequests.refresh': async (p) => pullRequests.refresh(p.pullRequestId),
+    'pullRequests.refresh': async (p) => (liveOnly('demo.pullRequestSync', 'Mode démo : ces pull requests sont fictives, rien n’est lu sur GitHub.'), pullRequests.refresh(p.pullRequestId)),
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),
     'sessions.start': async (p) => sessions.start(p),
@@ -286,7 +296,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     return validated.data as CommandResult<C>;
   }
 
-  pullRequests.startWatching(opts.pullRequestRefreshMs ?? 120_000);
+  /* Demo pull requests are fictional: nothing polls GitHub for them (nor cleans their lanes up after a merge). */
+  if (!demo) pullRequests.startWatching(opts.pullRequestRefreshMs ?? 120_000);
   await remote.init({ info, bus, call });
 
   return {

@@ -372,6 +372,8 @@ export const en: Record<MessageKey, string> = {
   'runtime.error.workspace.hasWorktrees': 'Remove the {count} associated worktree(s) first ({branches}).',
   'runtime.error.demo.realRepository': 'Demo mode: real repositories are managed in live mode.',
   'runtime.error.demo.pullRequests': 'Demo mode: pull requests are opened in live mode.',
+  'runtime.error.demo.pullRequestSync': 'Demo mode: these pull requests are fictional, nothing is read from GitHub.',
+  'runtime.error.demo.noDiff': 'Demo mode: this worktree has no simulated changes.',
   'runtime.error.demo.remoteAccess': 'Demo mode: remote access is set up in live mode.',
   'runtime.error.plan.singleOneAgent': 'Single mode uses exactly one agent.',
   'runtime.error.plan.bestOfNMin': 'Best-of-N needs at least two agents.',
