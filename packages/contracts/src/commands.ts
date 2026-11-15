@@ -364,6 +364,8 @@ export const commands = {
       prompt: z.string().min(1).max(50_000),
       model: z.string().nullable().default(null),
       executionMode: ExecutionModeSchema.optional(),
+      /** `worktree`: the session works in its own worktree on a `codeo/session-…` branch, never in the user's checkout. */
+      isolation: TaskIsolationSchema.default('worktree'),
     }),
     AgentSessionSchema,
     'session:write',

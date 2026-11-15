@@ -5,7 +5,7 @@ import { CodexProvider } from '@codeo/agent-provider-codex';
 import type { AgentProvider } from '@codeo/agent-provider-core';
 import { commands, localizedError, PROTOCOL_VERSION, RuntimeError, type CommandName, type CommandParsedParams, type CommandResult, type CommandScope, type RuntimeInfo } from '@codeo/contracts';
 import { ApprovalRepo, EventRepo, openDatabase, SessionRepo, SettingsRepo, TaskRepo, WorkspaceRepo, WorktreeRepo, PullRequestRepo, type OpenedDatabase } from '@codeo/database';
-import type { Machine } from '@codeo/domain';
+import type { AgentSession, Machine } from '@codeo/domain';
 import { inspectRepository } from '@codeo/git';
 import { createLogger, KeyedLock, newId, type Logger } from '@codeo/shared-utils';
 import { DEMO_LIVE_TASK_ID, DEMO_PATH_PREFIX } from './demo/dataset';
@@ -185,6 +185,23 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   }
 
   /* A merged PR's lane is cleaned up the same guarded way, never forced: uncommitted work keeps it. */
+  /**
+   * A session started on its own works in a fresh worktree of its repository (unless `isolation: 'none'`), created and
+   * launched under the lane's path lock so `worktrees.remove` cannot interleave. Demo repositories are not checkouts.
+   */
+  async function startStandaloneSession(p: CommandParsedParams<'sessions.start'>): Promise<AgentSession> {
+    if (demo || p.isolation === 'none') return sessions.start(p);
+    const ws = await workspaces.get(p.workspaceId);
+    const repositoryId = p.repositoryId ?? ws.repositories[0]?.id ?? null;
+    if (!repositoryId) return sessions.start(p);
+    const id = newId('ses');
+    const title = p.title?.trim() || p.prompt.split('\n')[0]!.slice(0, 80);
+    return worktreeLocks.run(laneKey(worktrees.sessionPath(id, repositoryId)), async () => {
+      const wt = await worktrees.createForSession(ws.id, repositoryId, { id, title });
+      return sessions.start({ ...p, repositoryId }, { sessionId: id, cwd: wt.path, worktreeId: wt.id, subtaskId: null, laneLockHeld: true });
+    });
+  }
+
   pullRequests.cleanupMergedLane = async (worktreeId) => {
     try {
       await removeWorktreeGuarded(worktreeId, false);
@@ -249,7 +266,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'pullRequests.refresh': async (p) => (liveOnly('demo.pullRequestSync', 'Mode démo : ces pull requests sont fictives, rien n’est lu sur GitHub.'), pullRequests.refresh(p.pullRequestId)),
     'sessions.list': async (p) => sessions.list(p),
     'sessions.get': async (p) => ({ session: await sessions.get(p.sessionId), entries: await sessions.entries(p.sessionId, p.afterSeq) }),
-    'sessions.start': async (p) => sessions.start(p),
+    'sessions.start': async (p) => startStandaloneSession(p),
     'sessions.send': async (p) => sessions.send(p.sessionId, p.text),
     'sessions.cancel': async (p) => sessions.cancel(p.sessionId),
     'approvals.list': async (p) => approvals.list(p),

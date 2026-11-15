@@ -32,6 +32,9 @@ export const useSession = (id: string | null) =>
   useQuery({ queryKey: keys.session(id ?? ''), queryFn: () => invoke('sessions.get', { sessionId: id! }), enabled: Boolean(id) });
 export const useWorktrees = (taskId: string | null) =>
   useQuery({ queryKey: keys.worktrees(taskId ?? ''), queryFn: () => invoke('worktrees.list', { taskId: taskId! }), enabled: Boolean(taskId) });
+/** Every worktree of a workspace (a standalone session's has no task). Under `['worktrees']`, refreshed with the lanes. */
+export const useWorkspaceWorktrees = (workspaceId: string | null) =>
+  useQuery({ queryKey: ['worktrees', 'workspace', workspaceId ?? ''] as const, queryFn: () => invoke('worktrees.list', { workspaceId: workspaceId! }), enabled: Boolean(workspaceId) });
 export const useTaskPullRequests = (taskId: string) =>
   useQuery({ queryKey: keys.pullRequests({ taskId }), queryFn: () => invoke('pullRequests.list', { taskId }) });
 export const useWorkspacePullRequests = (workspaceId: string | null) =>

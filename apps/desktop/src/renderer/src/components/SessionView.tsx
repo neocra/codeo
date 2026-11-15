@@ -5,8 +5,9 @@ import { AgentMessage, Avatar, Button, Icon, StatusPill, Textarea } from '@codeo
 import { locales } from '@codeo/i18n';
 import { describeError, invoke } from '../lib/api';
 import { formatRelative, useT } from '../lib/i18n';
-import { keys, usePendingApprovals, useSession } from '../lib/queries';
+import { keys, usePendingApprovals, useSession, useWorkspaceWorktrees } from '../lib/queries';
 import { ApprovalItem } from './ApprovalItem';
+import { WorktreeRow } from './TaskDetail';
 import { providerName, sessionTone } from './status';
 
 /** System entries carry a key so each locale renders its own wording; the stored text is the fallback. */
@@ -104,6 +105,9 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const entries = detail.data?.entries ?? [];
   const session = detail.data?.session ?? null;
   const author = session ? providerName[session.provider] : '';
+  /* A standalone session's own worktree: shown with its removal flow (a task's lanes are handled in the task detail). */
+  const worktrees = useWorkspaceWorktrees(session && !session.taskId && session.worktreeId ? session.workspaceId : null);
+  const ownWorktree = session?.worktreeId ? (worktrees.data ?? []).find((w) => w.id === session.worktreeId) ?? null : null;
 
   const lastEntry = entries[entries.length - 1];
   useEffect(() => {
@@ -153,6 +157,11 @@ export function SessionView({ sessionId }: { sessionId: string }) {
           </Button>
         ) : null}
       </div>
+      {ownWorktree ? (
+        <div className="cd-session__worktree">
+          <WorktreeRow worktree={ownWorktree} busy={live} />
+        </div>
+      ) : null}
       <div className="cd-session__transcript" ref={scroller}>
         {entries.map((e) => (
           <Entry key={e.id} entry={e} author={author} />
