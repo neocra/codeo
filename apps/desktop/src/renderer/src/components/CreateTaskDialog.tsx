@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import type { SubtaskPlan } from '@codeo/contracts';
+import { useEffect, useState } from 'react';
+import type { GitHubIssue, SubtaskPlan } from '@codeo/contracts';
 import type { AgentProviderId, AgentRole, ExecutionMode, OrchestrationMode } from '@codeo/domain';
 import { Button, Card, Choice, Dialog, Field, Input, Placeholder, Select, Textarea } from '@codeo/ui-desktop';
 import type { MessageKey } from '@codeo/i18n';
 import { invoke, describeError } from '../lib/api';
 import { useT } from '../lib/i18n';
-import { useProviders, useWorkspaces } from '../lib/queries';
+import { useGitHubIssues, useProviders, useWorkspaces } from '../lib/queries';
 import { useUi } from '../lib/store';
 import { ExecutionModeSelect } from './ExecutionModeSelect';
 
@@ -32,7 +32,11 @@ const agentLabelKey = (mode: OrchestrationMode): MessageKey =>
 let nextKey = 1;
 const draft = (provider: AgentProviderId, role: AgentRole, executionMode: ExecutionMode): AgentDraft => ({ key: nextKey++, title: '', instructions: '', provider, role, executionMode, repositoryId: '', dependsOn: [] });
 
-export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+type Source = 'manual' | 'github';
+const issueValue = (i: Pick<GitHubIssue, 'repositoryId' | 'number'>) => `${i.repositoryId}:${i.number}`;
+
+/** `issue`: open the dialog on that GitHub issue (from the Tickets screen) instead of a blank manual task. */
+export function CreateTaskDialog({ open, onClose, issue = null }: { open: boolean; onClose: () => void; issue?: GitHubIssue | null }) {
   const t = useT();
   const qc = useQueryClient();
   const workspaceId = useUi((s) => s.workspaceId);
@@ -53,10 +57,30 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
   const [isolated, setIsolated] = useState(true);
   const [agents, setAgents] = useState<AgentDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<Source>('manual');
+  const [issueId, setIssueId] = useState('');
+  const issues = useGitHubIssues(ws?.id ?? null, open && source === 'github');
+  const issueList = (issues.data ?? []).flatMap((r) => r.issues.map((i) => ({ ...i, repositoryName: r.repositoryName })));
   const available = providers.data?.filter((p) => p.installed) ?? [];
   const isInstalled = (id: AgentProviderId) => available.some((p) => p.provider === id);
   const parallelMode = mode === 'parallel' || mode === 'best-of-n';
   const multiRepo = Boolean(ws && ws.repositories.length > 1);
+
+  /* An issue fills the task in; everything stays editable afterwards. */
+  const applyIssue = (i: GitHubIssue) => {
+    setIssueId(issueValue(i));
+    setTitle(i.title.slice(0, 200));
+    setTicketKey(i.key);
+    setObjective([i.body.trim(), t('tickets.github.issueLink', { url: i.url })].filter(Boolean).join('\n\n'));
+    setRepos([i.repositoryId]);
+  };
+  useEffect(() => {
+    if (open && issue) {
+      setSource('github');
+      applyIssue(issue);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the dialog opens on an issue
+  }, [open, issue]);
 
   const changeMode = (m: OrchestrationMode) => {
     setMode(m);
@@ -127,6 +151,8 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
     setIsolated(true);
     setAgents([]);
     setError(null);
+    setSource('manual');
+    setIssueId('');
   };
   const planValid = mode === 'single' ? isInstalled(provider) : agents.length >= (mode === 'best-of-n' ? 2 : 1) && agents.every((a) => isInstalled(a.provider));
   const valid = title.trim().length > 0 && Boolean(ws) && planValid;
@@ -142,11 +168,33 @@ export function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: ()
       >
         <Field label={t('tasks.create.source')}>
           <div className="cd-row-gap">
-            <Choice checked onChange={() => undefined} label={t('tasks.create.source.manual')} name="source" />
+            <Choice checked={source === 'manual'} onChange={() => setSource('manual')} label={t('tasks.create.source.manual')} name="source" />
+            <Choice checked={source === 'github'} onChange={() => setSource('github')} label={t('tasks.create.source.github')} name="source" />
             <Placeholder>{t('tasks.create.source.jira')} · {t('placeholder.phase', { n: 5 })}</Placeholder>
-            <Placeholder>{t('tasks.create.source.github')} · {t('placeholder.phase', { n: 5 })}</Placeholder>
           </div>
         </Field>
+        {source === 'github' ? (
+          <Field label={t('tasks.create.issue')} htmlFor="task-issue" error={issues.data && !issueList.length ? t('tasks.create.issue.none') : undefined}>
+            <Select
+              id="task-issue"
+              value={issueId}
+              disabled={issues.isLoading}
+              onChange={(e) => {
+                const picked = issueList.find((i) => issueValue(i) === e.target.value);
+                if (picked) applyIssue(picked);
+              }}
+            >
+              <option value="">{issues.isLoading ? t('tickets.github.loading') : t('tasks.create.issue.choose')}</option>
+              {/* The issue the dialog opened on stays selectable even before the list is read. */}
+              {issue && !issueList.some((i) => issueValue(i) === issueValue(issue)) ? <option value={issueValue(issue)}>{`${issue.key} — ${issue.title}`}</option> : null}
+              {issueList.map((i) => (
+                <option key={issueValue(i)} value={issueValue(i)}>
+                  {multiRepo ? `${i.repositoryName} ${i.key} — ${i.title}` : `${i.key} — ${i.title}`}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
         <div className="cd-form__row">
           <Field label={t('tasks.create.titleField')} htmlFor="task-title">
             <Input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus required maxLength={200} />

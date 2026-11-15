@@ -15,6 +15,17 @@ export interface RemotePullRequest {
   checks: CICheck[];
 }
 
+/** An open issue as the code host lists it. */
+export interface RemoteIssue {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  labels: string[];
+  author: string | null;
+  updatedAt: string;
+}
+
 export interface GitHubStatus {
   installed: boolean;
   version: string | null;
@@ -32,6 +43,8 @@ export interface GitHubClient {
   findByBranch(cwd: string, branch: string): Promise<RemotePullRequest | null>;
   create(cwd: string, input: { base: string; head: string; title: string; body: string; draft: boolean }): Promise<RemotePullRequest>;
   view(cwd: string, url: string): Promise<RemotePullRequest>;
+  /** Open issues of the repository checked out at `cwd`, most recently updated first. */
+  listIssues(cwd: string, limit: number): Promise<RemoteIssue[]>;
 }
 
 export class GhError extends Error {
@@ -77,6 +90,35 @@ export const GhPullRequestSchema = z.object({
     .optional(),
 });
 export type GhPullRequest = z.infer<typeof GhPullRequestSchema>;
+
+const ISSUE_FIELDS = 'number,title,body,url,labels,author,updatedAt';
+
+export const GhIssueSchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  body: z.string().nullable().optional(),
+  url: z.string().url(),
+  labels: z.array(z.object({ name: z.string() }).passthrough()).nullable().optional(),
+  author: z.object({ login: z.string() }).passthrough().nullable().optional(),
+  updatedAt: z.string(),
+});
+
+/** Maps `gh issue list --json` output to `RemoteIssue`s, newest update first. */
+export function toRemoteIssues(raw: unknown): RemoteIssue[] {
+  return z
+    .array(GhIssueSchema)
+    .parse(raw)
+    .map((i) => ({
+      number: i.number,
+      title: i.title,
+      body: i.body ?? '',
+      url: i.url,
+      labels: (i.labels ?? []).map((l) => l.name),
+      author: i.author?.login ?? null,
+      updatedAt: i.updatedAt,
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
 
 function checkRunStatus(status: string, conclusion: string | null | undefined): CICheck['status'] {
   if (status !== 'COMPLETED') return status === 'IN_PROGRESS' ? 'running' : 'queued';
@@ -199,5 +241,10 @@ export class GhCliClient implements GitHubClient {
 
   async view(cwd: string, url: string): Promise<RemotePullRequest> {
     return toRemotePullRequest(JSON.parse(await gh(['pr', 'view', url, '--json', PR_FIELDS], cwd)));
+  }
+
+  async listIssues(cwd: string, limit: number): Promise<RemoteIssue[]> {
+    const out = await gh(['issue', 'list', '--state', 'open', '--limit', String(limit), '--json', ISSUE_FIELDS], cwd);
+    return toRemoteIssues(JSON.parse(out || '[]'));
   }
 }
