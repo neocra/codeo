@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudePermissionMode, codexSandboxMode, EXECUTION_MODES, supportsPerActionEscalation } from '../src/execution-mode';
+import { claudePermissionMode, codexApprovalSettings, codexSandboxMode, EXECUTION_MODES, supportsPerActionEscalation } from '../src/execution-mode';
 
 describe('execution mode → native provider policy', () => {
   it('maps every mode to a Claude permission mode', () => {
@@ -12,6 +12,13 @@ describe('execution mode → native provider policy', () => {
     expect(codexSandboxMode('manual')).toBe('read-only');
     expect(codexSandboxMode('auto')).toBe('workspace-write');
     expect(codexSandboxMode('full')).toBe('danger-full-access');
+  });
+
+  it('sends Codex escalations to its auto-review agent in auto mode only', () => {
+    expect(codexApprovalSettings('auto')).toEqual({ approvalPolicy: 'on-request', config: { approvals_reviewer: 'auto_review' } });
+    // `codex exec` cannot ask a human: outside auto, no escalation is ever requested.
+    expect(codexApprovalSettings('manual')).toEqual({ approvalPolicy: 'never', config: {} });
+    expect(codexApprovalSettings('full')).toEqual({ approvalPolicy: 'never', config: {} });
   });
 
   it('keeps manual mode read-only / approval-gated on both providers', () => {
