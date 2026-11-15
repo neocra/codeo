@@ -164,6 +164,12 @@ a { color: var(--sky); text-decoration: none; }
 .cd-kanban__head { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-1) var(--space-2); font: var(--text-label); color: var(--ink-muted); }
 .cd-kanban__card { background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-3); display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
 .cd-kanban__card:hover { background: var(--bg-300); }
+.cd-issue { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-3); background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.cd-issue > .cd-key { min-width: 5ch; }
+.cd-issue__main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cd-issue__title { font-weight: 500; overflow-wrap: anywhere; }
+.cd-issue__label { padding: 1px 8px; border-radius: var(--radius-full); background: var(--bg-300); border: 1px solid var(--line); color: var(--ink-muted); font: var(--text-label); }
+@media (max-width: 900px) { .cd-issue { grid-template-columns: auto minmax(0, 1fr); } .cd-issue__actions { grid-column: 1 / -1; justify-content: flex-end; } }
 
 /* ---- light theme adjustments ---- */
 :root[data-theme="light"] .cd-scrim { background: #0c141266; }

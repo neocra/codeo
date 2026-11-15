@@ -145,6 +145,32 @@ export const GitHubStatusSchema = z.object({
 });
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 
+/** An open GitHub issue of one workspace repository, read live with the user's `gh` (never stored). */
+export const GitHubIssueSchema = z.object({
+  repositoryId: IdSchema,
+  number: z.number().int().positive(),
+  /** `#42`: the ticket key a task created from this issue carries. */
+  key: z.string(),
+  title: z.string(),
+  body: z.string(),
+  url: z.string().url(),
+  labels: z.array(z.string()),
+  author: z.string().nullable(),
+  updatedAt: z.string(),
+  /** The newest task of this workspace created from this issue (same key, same repository), if any. */
+  taskId: IdSchema.nullable(),
+});
+export type GitHubIssue = z.infer<typeof GitHubIssueSchema>;
+
+/** One repository's open issues, or why they could not be read (no GitHub remote, `gh` missing or logged out…). */
+export const RepositoryIssuesSchema = z.object({
+  repositoryId: IdSchema,
+  repositoryName: z.string(),
+  issues: z.array(GitHubIssueSchema),
+  error: z.string().nullable(),
+});
+export type RepositoryIssues = z.infer<typeof RepositoryIssuesSchema>;
+
 /** Remote access through the Codeo gateway (phase 6): the runtime dials out, phones are paired by QR code. */
 export const RemoteConnectionSchema = z.enum([
   /** Remote access is off: nothing dials out. */
@@ -322,6 +348,12 @@ export const commands = {
 
   /** Whether the user's GitHub CLI is installed and logged in (pull requests are opened with it). */
   'github.status': define(z.object({}), GitHubStatusSchema, 'read'),
+  /** Open GitHub issues of every repository of a workspace, newest update first (one `gh issue list` per repository). */
+  'tickets.github': define(
+    z.object({ workspaceId: IdSchema, limit: z.number().int().min(1).max(100).default(50) }),
+    z.array(RepositoryIssuesSchema),
+    'read',
+  ),
   'pullRequests.list': define(
     z.object({ workspaceId: IdSchema.optional(), taskId: IdSchema.optional() }),
     z.array(PullRequestSchema),

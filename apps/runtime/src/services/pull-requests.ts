@@ -32,7 +32,9 @@ export function defaultPullRequestText(task: Task): { title: string; body: strin
   const agents = orderedSubtasks(task)
     .filter((s) => s.status === 'completed')
     .map((s) => `- ${s.title} (${s.assignment.provider}, ${s.assignment.role})`);
-  const body = [task.objective.trim(), agents.length ? `Agents :\n${agents.join('\n')}` : '', 'Créée avec Codeo.']
+  /* A task taken from a GitHub issue (`#42`) closes it when the pull request is merged. */
+  const closes = /^#\d+$/.test(task.ticketKey ?? '') ? `Closes ${task.ticketKey}` : '';
+  const body = [task.objective.trim(), agents.length ? `Agents :\n${agents.join('\n')}` : '', closes, 'Créée avec Codeo.']
     .filter(Boolean)
     .join('\n\n');
   return { title, body };

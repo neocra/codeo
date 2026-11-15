@@ -16,6 +16,8 @@ export const keys = {
   /** Under the task's worktrees key, so every task/worktree event that refreshes the lanes refreshes their diffs too. */
   pullRequests: (scope: { taskId?: string; workspaceId?: string | null }) => ['pullRequests', scope.taskId ?? scope.workspaceId ?? 'all'] as const,
   github: ['github'] as const,
+  /** Open GitHub issues of a workspace; under `['tasks']`, so creating a task from one refreshes its link. */
+  githubIssues: (workspaceId: string) => ['tasks', 'githubIssues', workspaceId] as const,
   remote: ['remote'] as const,
   remoteDevices: ['remote', 'devices'] as const,
   worktreeDiff: (taskId: string, worktreeId: string) => ['worktrees', taskId, 'diff', worktreeId] as const,
@@ -40,6 +42,9 @@ export const useTaskPullRequests = (taskId: string) =>
 export const useWorkspacePullRequests = (workspaceId: string | null) =>
   useQuery({ queryKey: keys.pullRequests({ workspaceId }), queryFn: () => invoke('pullRequests.list', workspaceId ? { workspaceId } : {}) });
 export const useGitHubStatus = () => useQuery({ queryKey: keys.github, queryFn: () => invoke('github.status', {}), staleTime: 60_000 });
+/** Read live with `gh` on each fetch: kept a minute, refetched on demand. */
+export const useGitHubIssues = (workspaceId: string | null, enabled = true) =>
+  useQuery({ queryKey: keys.githubIssues(workspaceId ?? ''), queryFn: () => invoke('tickets.github', { workspaceId: workspaceId! }), enabled: enabled && Boolean(workspaceId), staleTime: 60_000 });
 export const useRemoteStatus = () => useQuery({ queryKey: keys.remote, queryFn: () => invoke('remote.status', {}) });
 /** The gateway does not tell the runtime when a phone pairs: poll faster while a pairing code is on screen. */
 export const useRemoteDevices = (enabled: boolean, pairing: boolean) =>

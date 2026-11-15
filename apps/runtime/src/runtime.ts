@@ -20,6 +20,8 @@ import { PullRequestService } from './services/pull-requests';
 import { RemoteService, type RemoteServiceOptions } from './services/remote';
 import { TaskService } from './services/tasks';
 import { GhCliClient, type GitHubClient } from './github/gh-cli';
+import { demoIssues } from './demo/issues';
+import { TicketService, type IssueSource } from './services/tickets';
 import { WorkspaceService } from './services/workspaces';
 import { WorktreeService } from './services/worktrees';
 import { RUNTIME_VERSION } from './version';
@@ -121,7 +123,11 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   /* Demo lanes are fictional folders git has never seen: their row is all there is to check. */
   sessions.worktreeValidator = demo ? (worktreeId) => worktrees.get(worktreeId) : (worktreeId) => worktrees.assertIntact(worktreeId);
   const tasks = new TaskService(taskRepo, workspaces, sessions, worktrees, bus, log.child('tasks'));
-  const pullRequests = new PullRequestService(pullRequestRepo, tasks, worktrees, workspaces, opts.github ?? new GhCliClient(), bus, log.child('pull-requests'), worktreeLocks);
+  const github = opts.github ?? new GhCliClient();
+  const pullRequests = new PullRequestService(pullRequestRepo, tasks, worktrees, workspaces, github, bus, log.child('pull-requests'), worktreeLocks);
+  /* Demo repositories have no GitHub remote: their issues are fictional, never read with `gh`. */
+  const issueSource: IssueSource = demo ? async (repo) => demoIssues(repo.id) ?? [] : (repo, limit) => github.listIssues(repo.path, limit);
+  const tickets = new TicketService(workspaces, tasks, issueSource, log.child('tickets'));
   const remote = new RemoteService(settings, bus, log.child('remote'), { name: machine.name, platform: machine.platform }, opts.remote);
   await approvals.init();
   await sessions.init();
@@ -261,6 +267,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     'worktrees.diff': async (p) => (demo ? demoDiff(p.worktreeId) : worktrees.diff(p.worktreeId)),
     'worktrees.remove': async (p) => ({ removed: await removeWorktreeGuarded(p.worktreeId, p.force) }),
     'github.status': async () => pullRequests.status(),
+    'tickets.github': async (p) => tickets.listGitHub(p.workspaceId, p.limit),
     'pullRequests.list': async (p) => pullRequests.list(p),
     'pullRequests.create': async (p) => (noDemoPullRequests(), pullRequests.create(p)),
     'pullRequests.refresh': async (p) => (liveOnly('demo.pullRequestSync', 'Mode démo : ces pull requests sont fictives, rien n’est lu sur GitHub.'), pullRequests.refresh(p.pullRequestId)),

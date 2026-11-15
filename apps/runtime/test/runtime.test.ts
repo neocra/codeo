@@ -11,7 +11,7 @@ import { startServer, type RuntimeServer } from '../src/server/ws-server';
 import { RuntimeClient } from '@codeo/remote-client';
 import { createLogger } from '@codeo/shared-utils';
 import WebSocket from 'ws';
-import type { GitHubClient, RemotePullRequest } from '../src/github/gh-cli';
+import { GhError, type GitHubClient, type RemoteIssue, type RemotePullRequest } from '../src/github/gh-cli';
 
 /** A deterministic fake provider: NOT a stand-in for real integrations, only for exercising runtime logic. */
 class FakeProvider implements AgentProvider {
@@ -84,6 +84,14 @@ class FakeGitHub implements GitHubClient {
     const pr = this.prs.get(url);
     if (!pr) throw new Error(`no PR ${url}`);
     return pr;
+  }
+  issues: RemoteIssue[] = [];
+  issuesError: GhError | null = null;
+  issueCalls: { cwd: string; limit: number }[] = [];
+  async listIssues(cwd: string, limit: number) {
+    this.issueCalls.push({ cwd, limit });
+    if (this.issuesError) throw this.issuesError;
+    return this.issues.slice(0, limit);
   }
 }
 
@@ -710,6 +718,37 @@ describe('orchestration and worktrees', () => {
     await expect(client.request('sessions.send', { sessionId: first.sessionId!, text: 'encore' })).rejects.toThrow(/terminée/);
   });
 
+});
+
+describe('github issues as tickets', () => {
+  const issue = (number: number, title: string): RemoteIssue => ({ number, title, body: `Corps ${number}`, url: `https://github.example/acme/app/issues/${number}`, labels: ['bug'], author: 'octo', updatedAt: '2026-11-15T10:00:00.000Z' });
+
+  it('lists the open issues of each repository and links the ones a task was created from', async () => {
+    const [ws] = await client.request('workspaces.list', {});
+    const repo = ws!.repositories[0]!;
+    github.issues = [issue(42, 'Réparer le login'), issue(7, 'Ajouter le mode sombre')];
+    github.issueCalls = [];
+    const before = await client.request('tickets.github', { workspaceId: ws!.id, limit: 10 });
+    expect(github.issueCalls).toEqual([{ cwd: repo.path, limit: 10 }]);
+    expect(before).toEqual([{ repositoryId: repo.id, repositoryName: repo.name, error: null, issues: [expect.objectContaining({ key: '#42', number: 42, repositoryId: repo.id, taskId: null }), expect.objectContaining({ key: '#7', taskId: null })] }]);
+
+    const task = await client.request('tasks.create', { workspaceId: ws!.id, title: 'Réparer le login', ticketKey: '#42', repositoryIds: [repo.id], provider: 'claude-code' });
+    const after = await client.request('tickets.github', { workspaceId: ws!.id });
+    expect(after[0]!.issues.map((i) => [i.key, i.taskId])).toEqual([['#42', task.id], ['#7', null]]);
+    await client.request('tasks.cancel', { taskId: task.id });
+  });
+
+  it('reports a repository whose issues cannot be read instead of failing the whole list', async () => {
+    const [ws] = await client.request('workspaces.list', {});
+    github.issuesError = new GhError('gh issue list failed', 'no git remotes found');
+    try {
+      const [repo] = await client.request('tickets.github', { workspaceId: ws!.id });
+      expect(repo).toMatchObject({ issues: [], error: 'no git remotes found' });
+    } finally {
+      github.issuesError = null;
+      github.issues = [];
+    }
+  });
 });
 
 describe('worktree recovery', () => {

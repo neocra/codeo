@@ -101,6 +101,13 @@ describe('demo runtime', () => {
     ]);
   });
 
+  it('lists fictional GitHub issues for the demo repositories, without calling gh', async () => {
+    const lists = await call(rt, 'tickets.github', { workspaceId: 'ws_demo_elyndor' });
+    expect(lists.map((r) => [r.repositoryName, r.error, r.issues.length])).toEqual([['elyndor-unity', null, 3], ['elyndor-backend', null, 1]]);
+    expect(lists[0]!.issues[0]).toMatchObject({ key: '#214', taskId: null });
+    expect(lists[0]!.issues[0]!.url.startsWith('https://example.com/demo/')).toBe(true);
+  });
+
   it('reviews the scripted diff of a demo lane and sends changes back to its agent', async () => {
     const [lane] = await call(rt, 'worktrees.list', { taskId: 'task_demo_ely142' });
     expect(lane).toMatchObject({ id: 'wt_demo_ely142', dirty: false });

@@ -4,6 +4,18 @@ _Updated: 2026-11-15_
 
 ## Current milestone: Phase 6 — remote access (in progress)
 
+### GitHub issues as tickets (done; verified by tests and in the app on demo data, not against a real GitHub repository)
+- `tickets.github` (scope `read`) lists the open issues of every repository of a workspace with the user's `gh`
+  (`gh issue list --state open --json …`, newest update first), read live and never stored. A repository whose issues
+  cannot be read (no GitHub remote, `gh` missing or logged out) reports its own error without failing the others. Each
+  issue says which task was created from it (same `#<number>` ticket key on the same repository). Demo repositories
+  have fictional issues (`demo/issues.ts`); `gh` is never called in demo mode.
+- Desktop: the Tickets screen lists the issues per repository (labels, author, "Ouvrir sur GitHub") with "Créer la
+  tâche", which opens the new-task dialog on that issue (title, `#<number>` key, body + issue link as the objective,
+  its repository); once created, the row offers "Voir la tâche". The dialog's source has a real "Issue GitHub" choice
+  with an issue picker. Jira stays a labelled placeholder.
+- A task whose ticket key is `#<number>` gets `Closes #<number>` in its pull request body, so merging closes the issue.
+
 ### Standalone sessions in their own worktree (done; verified by tests, the panel's worktree bar not in the app)
 - `sessions.start` takes `isolation` (`worktree` by default, `none` for the old behaviour): the runtime creates a
   worktree under the data directory on a `codeo/session-<title>-<id>` branch from the default branch, not tied to any
@@ -242,12 +254,12 @@ _Updated: 2026-11-15_
   registrations in memory, so a restart means turning remote access on again; with PostgreSQL they survive. One gateway
   instance per runtime: rate limiters and the relay are per process. No certificate pinning; push notifications need APNs / FCM credentials on the gateway and a development build of the app (Expo Go cannot receive them), and a decided approval withdraws its notification only once the app runs (the content-free pushes cannot be retracted remotely); the runtime proves its identity at
   connection time but frames are not signed end to end, and Face ID is enforced by the app only. "Forget this pairing" revokes the phone on the gateway when it is reachable (otherwise revoke from the desktop).
-- Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
+- Tickets: GitHub issues only (open ones, 50 per repository, read on demand — no webhooks, nothing synced back to GitHub besides the PR's `Closes #N`); Jira and Plugins (phase 8) are labelled placeholders. The kanban columns follow task status, not the issue.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
 - Standalone sessions get their own worktree (`codeo/session-…`, opt out with `isolation: 'none'`), removed by hand from the session panel: no PR flow from a session, and no automatic cleanup. Demo mode runs them in the demo folder.
 - Review comments are not persisted as drafts (they live in the screen until sent) and are not posted to GitHub PRs; after completion, iterate with a new task.
-- Demo mode: tickets have no demo data yet. Demo repositories are not Git checkouts, so tasks created in demo mode run without worktree isolation (parallel / best-of-N are refused there); only the seeded lanes have diffs, and a change request on them does not change the scripted diff. Demo pull requests are a fixed snapshot (refresh is refused). The demo dataset is written once (and upgraded once per dataset version); delete `~/.codeo/demo` to reset it.
+- Demo mode: GitHub issues are a fixed fictional list. Demo repositories are not Git checkouts, so tasks created in demo mode run without worktree isolation (parallel / best-of-N are refused there); only the seeded lanes have diffs, and a change request on them does not change the scripted diff. Demo pull requests are a fixed snapshot (refresh is refused). The demo dataset is written once (and upgraded once per dataset version); delete `~/.codeo/demo` to reset it.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox; in Auto, escalations out of `workspace-write` are decided by Codex's auto-review agent (`approvals_reviewer = "auto_review"`), never by a Codeo approval.
 - Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
