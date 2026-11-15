@@ -239,7 +239,7 @@ _Updated: 2026-11-14_
 - Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
 - Review comments are not persisted as drafts (they live in the screen until sent) and are not posted to GitHub PRs; after completion, iterate with a new task.
 - Demo mode: tickets have no demo data yet. Demo repositories are not Git checkouts, so tasks created in demo mode run without worktree isolation (parallel / best-of-N are refused there); only the seeded lanes have diffs, and a change request on them does not change the scripted diff. Demo pull requests are a fixed snapshot (refresh is refused). The demo dataset is written once (and upgraded once per dataset version); delete `~/.codeo/demo` to reset it.
-- Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox (`workspace-write`).
+- Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox; in Auto, escalations out of `workspace-write` are decided by Codex's auto-review agent (`approvals_reviewer = "auto_review"`), never by a Codeo approval.
 - Packaging: `release.yml` builds unsigned installers for macOS/Windows/Linux on each GitHub release and the app can check/install updates (see `docs/development/releases.md`); macOS self-update needs signing secrets.
 - Mascot asset missing from the artifact (see `docs/design/README.md`).
 
