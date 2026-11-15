@@ -112,8 +112,11 @@ body { margin: 0; font-family: var(--font-sans); font-size: 14px; line-height: 2
 .cd-avatar__dot { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: var(--radius-full); border: 2px solid var(--bg-200); background: var(--ink-faint); transition: background-color var(--dur-base) var(--ease-standard); }
 .is-active .cd-avatar__dot { background: var(--mint); }
 .is-waiting .cd-avatar__dot { background: var(--sky); }
-.cd-agent__text { min-width: 0; flex: 1; }
-.cd-agent__name { font-weight: 600; font-size: 14px; line-height: 20px; }
+/* Narrow columns (Home): the name stays on one line and the status pill wraps under it, right-aligned. */
+.cd-agent { flex-wrap: wrap; }
+.cd-agent__text { flex: 1 1 0; min-width: min-content; max-width: 100%; }
+.cd-agent__name { font-weight: 600; font-size: 14px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cd-agent > .cd-pill { margin-left: auto; }
 .cd-agent__role { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
 
 /* ---------- ApprovalCard ---------- */
