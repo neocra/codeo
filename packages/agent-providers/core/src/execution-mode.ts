@@ -35,7 +35,8 @@ export function claudePermissionMode(mode: ExecutionMode): ClaudePermissionMode 
  * Map an execution mode to Codex's native `sandboxMode`. Codex runs non-interactively
  * (`codex exec`): it has no per-tool approval callback, so its sandbox is the whole policy.
  *  - `manual` → `read-only`: the agent cannot write, matching "ask before any change".
- *  - `auto` → `workspace-write`: edits within the workspace, network still restricted.
+ *  - `auto` → `workspace-write`: edits within the workspace, network still restricted; escalations
+ *    out of the sandbox go to Codex's auto-review agent (see `codexApprovalSettings`).
  *  - `full` → `danger-full-access`: explicit opt-in unattended run.
  */
 export function codexSandboxMode(mode: ExecutionMode): CodexSandboxMode {
@@ -49,14 +50,33 @@ export function codexSandboxMode(mode: ExecutionMode): CodexSandboxMode {
   }
 }
 
+/** Codex native approval settings: the SDK's `approvalPolicy` plus `--config` overrides. */
+export interface CodexApprovalSettings {
+  approvalPolicy: 'never' | 'on-request';
+  config: { approvals_reviewer?: 'auto_review' };
+}
+
+/**
+ * Map an execution mode to Codex's native approval settings. `codex exec` cannot ask a human,
+ * so Codeo never lets Codex wait for one:
+ *  - `manual` / `full` → `never`: no escalation is requested; the sandbox alone decides.
+ *  - `auto` → `on-request` reviewed by `approvals_reviewer = "auto_review"`: when a command needs
+ *    to leave the `workspace-write` sandbox (network, writes outside the workspace), Codex's own
+ *    reviewer agent allows or denies it — the counterpart of Claude Code's auto-mode classifier.
+ *    A denied escalation is reported back to the agent, which continues with a safer path.
+ */
+export function codexApprovalSettings(mode: ExecutionMode): CodexApprovalSettings {
+  return mode === 'auto' ? { approvalPolicy: 'on-request', config: { approvals_reviewer: 'auto_review' } } : { approvalPolicy: 'never', config: {} };
+}
+
 /** Every execution mode, in increasing autonomy — the UI iterates this order. */
 export const EXECUTION_MODES: readonly ExecutionMode[] = ['manual', 'auto', 'full'] as const;
 
 /**
  * Whether a provider can escalate individual sensitive actions to a human *within* a mode.
  * Claude Code routes sensitive tools through `canUseTool` (Codeo approvals). Codex runs
- * non-interactively (`codex exec`): its sandbox is the whole policy, so there is no
- * per-action escalation — `auto`/`manual` degrade to the sandbox boundary instead.
+ * non-interactively (`codex exec`): nothing reaches a human — in `auto` its own reviewer settles
+ * sandbox escalations, otherwise the sandbox is the whole policy.
  */
 export function supportsPerActionEscalation(provider: AgentProviderId): boolean {
   return provider === 'claude-code';
