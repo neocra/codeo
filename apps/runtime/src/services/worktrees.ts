@@ -67,6 +67,12 @@ export function worktreeBranch(
   return sub ? `${base}-${sub.order + 1}` : base;
 }
 
+/** `codeo/session-<slug>-<session short id>`: the branch of a standalone session's own worktree. */
+export function sessionBranch(session: { id: string; title: string }): string {
+  const short = session.id.replace(/^[a-z]+_/, '').slice(0, 8);
+  return `codeo/session-${branchSlug(session.title)}-${short}`;
+}
+
 /**
  * Isolated working copies for agents. Worktrees live under the runtime data directory —
  * never inside the user's repository — on a dedicated `codeo/…` branch created from the
@@ -220,9 +226,55 @@ export class WorktreeService {
       await this.forgetRegistration(repository.path, existing.path);
       await this.repo.delete(existing.id);
     }
+    return this.createLane(ws.id, repository, {
+      target: this.lanePath(task, sub, repository.id),
+      branch: worktreeBranch(task, lane),
+      taskId: task.id,
+      subtaskId: lane?.id ?? null,
+    });
+  }
+
+  /** Directory of a standalone session's own worktree. */
+  sessionPath(sessionId: string, repositoryId: string): string {
+    return path.join(this.rootDir, repositoryId, sessionId);
+  }
+
+  /**
+   * A fresh worktree for a standalone session (`sessions.start`), on its own `codeo/session-…` branch from the
+   * repository's default branch: the session never works in the user's checkout. Not tied to any task.
+   */
+  createForSession(
+    workspaceId: string,
+    repositoryId: string,
+    session: { id: string; title: string },
+  ): Promise<Worktree> {
+    return this.locks.run(workspaceId, async () => {
+      const ws = await this.workspaces.get(workspaceId);
+      const repository = ws.repositories.find((r) => r.id === repositoryId);
+      if (!repository)
+        throw localizedError(
+          'NOT_FOUND',
+          'repo.notFound',
+          { id: repositoryId },
+          `Dépôt introuvable: ${repositoryId}`,
+        );
+      return this.createLane(ws.id, repository, {
+        target: this.sessionPath(session.id, repository.id),
+        branch: sessionBranch(session),
+        taskId: null,
+        subtaskId: null,
+      });
+    });
+  }
+
+  /** Creates (or adopts after a crash) the worktree at `target` on `branch` and records it. Caller holds the workspace lock. */
+  private async createLane(
+    workspaceId: string,
+    repository: Repository,
+    lane: { target: string; branch: string; taskId: string | null; subtaskId: string | null },
+  ): Promise<Worktree> {
+    const { target, branch } = lane;
     const baseBranch = await this.baseRef(repository);
-    const branch = worktreeBranch(task, lane);
-    const target = this.lanePath(task, sub, repository.id);
     mkdirSync(path.dirname(target), { recursive: true });
     /* Crash recovery: a directory left by a run that died between `git worktree add` and the row insert
        is adopted when git knows it on the expected branch; anything else at that path is refused, never deleted. */
@@ -255,10 +307,10 @@ export class WorktreeService {
     }
     const worktree: Worktree = {
       id: newId('wt'),
-      workspaceId: ws.id,
+      workspaceId,
       repositoryId: repository.id,
-      taskId: task.id,
-      subtaskId: lane?.id ?? null,
+      taskId: lane.taskId,
+      subtaskId: lane.subtaskId,
       path: target,
       branch,
       baseBranch,

@@ -184,6 +184,10 @@ export const fr = {
   'sessions.new.title': 'Nouvelle session',
   'sessions.new.prompt': 'Instruction',
   'sessions.new.repository': 'Dépôt',
+  'sessions.isolation.worktree': 'Worktree isolé',
+  'sessions.isolation.none': 'Dans le dépôt',
+  'sessions.new.isolation': 'Isoler la session dans un worktree Git',
+  'sessions.new.isolation.hint': 'L’agent travaille sur sa propre branche codeo/session-… hors de votre dossier : vos fichiers en cours ne sont pas touchés.',
 
   'approvals.title': 'Approbations',
   'approvals.subtitle': 'Opérations sensibles demandées par vos agents.',

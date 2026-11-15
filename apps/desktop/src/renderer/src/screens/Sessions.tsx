@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { AgentProviderId, AgentRole, ExecutionMode } from '@codeo/domain';
-import { Avatar, Button, Dialog, EmptyState, Field, Select, StatusPill, Tabs, Textarea } from '@codeo/ui-desktop';
+import { Avatar, Button, Choice, Dialog, EmptyState, Field, Select, StatusPill, Tabs, Textarea } from '@codeo/ui-desktop';
 import { ExecutionModeSelect } from '../components/ExecutionModeSelect';
 import { SessionView } from '../components/SessionView';
 import { providerName, sessionTone } from '../components/status';
@@ -26,11 +26,13 @@ function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [executionModeOverride, setExecutionMode] = useState<ExecutionMode | null>(null);
   const executionMode = executionModeOverride ?? ws?.defaultExecutionMode ?? 'auto';
   const [repositoryId, setRepositoryId] = useState<string>('');
+  const [isolated, setIsolated] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const start = useMutation({
-    mutationFn: () => invoke('sessions.start', { workspaceId: ws!.id, repositoryId: repositoryId || ws!.repositories[0]?.id || null, provider, role, ...(executionModeOverride ? { executionMode: executionModeOverride } : {}), prompt: prompt.trim() }),
+    mutationFn: () => invoke('sessions.start', { workspaceId: ws!.id, repositoryId: repositoryId || ws!.repositories[0]?.id || null, provider, role, ...(executionModeOverride ? { executionMode: executionModeOverride } : {}), isolation: isolated ? 'worktree' : 'none', prompt: prompt.trim() }),
     onSuccess: (s) => {
       void qc.invalidateQueries({ queryKey: ['sessions'] });
+      void qc.invalidateQueries({ queryKey: ['worktrees'] });
       setPrompt('');
       setExecutionMode(null);
       onClose();
@@ -82,6 +84,9 @@ function NewSessionDialog({ open, onClose }: { open: boolean; onClose: () => voi
             </Select>
           </Field>
         ) : null}
+        <Field label={t('sessions.new.isolation')} hint={t('sessions.new.isolation.hint')}>
+          <Choice type="checkbox" checked={isolated} onChange={() => setIsolated((v) => !v)} label={isolated ? t('sessions.isolation.worktree') : t('sessions.isolation.none')} />
+        </Field>
         <Field label={t('sessions.new.prompt')} htmlFor="ns-prompt">
           <Textarea id="ns-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} autoFocus placeholder={t('tasks.create.objective.placeholder')} />
         </Field>

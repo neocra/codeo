@@ -1,8 +1,17 @@
 # Progress
 
-_Updated: 2026-11-14_
+_Updated: 2026-11-15_
 
 ## Current milestone: Phase 6 — remote access (in progress)
+
+### Standalone sessions in their own worktree (done; verified by tests, the panel's worktree bar not in the app)
+- `sessions.start` takes `isolation` (`worktree` by default, `none` for the old behaviour): the runtime creates a
+  worktree under the data directory on a `codeo/session-<title>-<id>` branch from the default branch, not tied to any
+  task, and launches the agent there under the lane lock (`WorktreeService.createForSession`, sharing the creation and
+  crash-adoption path of task lanes). Demo mode keeps the demo folder.
+- Desktop: "Isoler la session dans un worktree Git" checkbox (on by default) in the new-session dialog; the session
+  panel shows the worktree's branch with the same removal flow as a task lane (dirty → confirmed force; the branch is
+  kept; an idle session is closed with its worktree).
 
 ### Phase 6, step 6: closing the remote-access gaps (done; verified by tests, not in the simulator)
 - Forgetting the pairing on the phone now revokes it on the gateway first: `POST /v1/devices/me/revoke` (device
@@ -236,7 +245,7 @@ _Updated: 2026-11-14_
 - Tickets (Jira/GitHub), Plugins: phase 5/8 — screens exist as labelled placeholders.
 - Pull requests: GitHub only (via `gh`, so github.com and GHE hosts `gh` is logged in to); status and checks are polled every 2 minutes (no webhooks); merging is done on GitHub; parallel lanes target the base branch (dependent PRs are linked in their description, not stacked on each other's branch). The remote is always `origin`. Dependencies are only written into the description when a PR is created.
 - Worktrees: cleaned up automatically only once their PR is merged (and only when clean); otherwise removal is manual from the task detail. Completing a Best-of-N task records the winner but does not remove the losing candidates' worktrees. Local branches are never deleted.
-- Standalone sessions (`sessions.start`, Sessions screen) still run in the repository root.
+- Standalone sessions get their own worktree (`codeo/session-…`, opt out with `isolation: 'none'`), removed by hand from the session panel: no PR flow from a session, and no automatic cleanup. Demo mode runs them in the demo folder.
 - Review comments are not persisted as drafts (they live in the screen until sent) and are not posted to GitHub PRs; after completion, iterate with a new task.
 - Demo mode: tickets have no demo data yet. Demo repositories are not Git checkouts, so tasks created in demo mode run without worktree isolation (parallel / best-of-N are refused there); only the seeded lanes have diffs, and a change request on them does not change the scripted diff. Demo pull requests are a fixed snapshot (refresh is refused). The demo dataset is written once (and upgraded once per dataset version); delete `~/.codeo/demo` to reset it.
 - Codex approvals: the Codex SDK drives `codex exec`, which has no permission callback; sessions rely on Codex's own sandbox; in Auto, escalations out of `workspace-write` are decided by Codex's auto-review agent (`approvals_reviewer = "auto_review"`), never by a Codeo approval.

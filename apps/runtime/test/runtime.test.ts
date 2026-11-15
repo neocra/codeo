@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { git } from '@codeo/git';
 import { createRuntime, type Runtime } from '../src/runtime';
+import { canonicalPath } from '../src/services/worktrees';
 import { startServer, type RuntimeServer } from '../src/server/ws-server';
 import { RuntimeClient } from '@codeo/remote-client';
 import { createLogger } from '@codeo/shared-utils';
@@ -254,6 +255,28 @@ describe('orchestration and worktrees', () => {
     expect(sessions[0]?.worktreeId).toBe(wt?.id);
     expect(fake.starts[before]?.prompts[0]).toContain(wt!.branch);
     expect((await client.request('tasks.get', { taskId: task.id })).subtasks[0]?.worktreeId).toBe(wt?.id);
+  });
+
+  it('runs a standalone session in its own worktree, and in the repository only when asked', async () => {
+    const before = fake.starts.length;
+    const session = await client.request('sessions.start', { workspaceId: await wsId(), provider: 'claude-code', title: 'Explorer le cache', prompt: 'hello' });
+    const [wt] = (await client.request('worktrees.list', { workspaceId: session.workspaceId })).filter((w) => w.id === session.worktreeId);
+    expect(wt).toBeDefined();
+    expect(wt!.taskId).toBeNull();
+    expect(wt!.branch).toBe(`codeo/session-explorer-le-cache-${session.id.replace(/^[a-z]+_/, '').slice(0, 8)}`);
+    expect(wt!.path.startsWith(worktreesDir)).toBe(true);
+    expect(session.cwd).toBe(wt!.path);
+    expect(fake.starts[before]?.cwd).toBe(wt!.path);
+    await waitFor(async () => (await client.request('sessions.get', { sessionId: session.id })).session.status === 'idle', 20_000);
+    /* Removing the worktree closes the idle session with it; the branch is kept. */
+    expect(await client.request('worktrees.remove', { worktreeId: wt!.id })).toEqual({ removed: true });
+    expect((await client.request('sessions.get', { sessionId: session.id })).session.status).toBe('completed');
+    await expect(git(['show-ref', '--verify', `refs/heads/${wt!.branch}`], { cwd: repoDir })).resolves.toBeTruthy();
+
+    const inRepo = await client.request('sessions.start', { workspaceId: session.workspaceId, provider: 'claude-code', prompt: 'hello', isolation: 'none' });
+    expect(inRepo.worktreeId).toBeNull();
+    expect(canonicalPath(inRepo.cwd)).toBe(canonicalPath(repoDir));
+    await waitFor(async () => (await client.request('sessions.get', { sessionId: inRepo.id })).session.status === 'idle', 20_000);
   });
 
   it('chains pipeline steps in one shared worktree and hands each step the previous output', async () => {

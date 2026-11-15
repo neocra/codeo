@@ -142,7 +142,7 @@ export function TaskDetail({ task }: { task: Task }) {
 }
 
 /** A worktree with its removal flow: a dirty one needs an explicit second confirmation. */
-function WorktreeRow({ worktree, busy }: { worktree: Worktree; busy: boolean }) {
+export function WorktreeRow({ worktree, busy }: { worktree: Worktree; busy: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);

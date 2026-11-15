@@ -128,6 +128,7 @@ a { color: var(--sky); text-decoration: none; }
 .cd-session__head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--line); }
 .cd-session__head .cd-avatar { width: 32px; height: 32px; font-size: 13px; }
 .cd-session__title { font: var(--text-heading); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cd-session__worktree { padding: var(--space-2) var(--space-6); border-bottom: 1px solid var(--line); background: var(--bg-100); }
 .cd-session__transcript { flex: 1; min-height: 0; overflow: auto; padding: var(--space-5) var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); }
 .cd-session__composer { display: flex; gap: var(--space-2); padding: var(--space-4) var(--space-6); border-top: 1px solid var(--line); background: var(--bg-100); }
 .cd-session__composer .cd-textarea { min-height: 44px; max-height: 160px; }
